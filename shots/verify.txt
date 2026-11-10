@@ -1,0 +1,13 @@
+seeding...
+seeded videos=13 shorts=3 channels=6
+shot ui_home_1.0.0.png (1280, 720)
+play frames=True changed=True playing=True
+shot ui_watch_1.0.0.png (1280, 720)
+shot ui_studio_1.0.0.png (1280, 720)
+shorts=3
+shorts page=shorts playing=False frame=True
+upload ok id=v-1794350418301-3697 count 13->14
+search hits=1
+bots views 31681->33579 added={'views': 2305, 'likes': 85, 'subs': 16, 'comments': 2}
+studio tab=bots page=studio
+VERIFY PASS
