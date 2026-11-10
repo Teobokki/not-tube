@@ -10,7 +10,7 @@ from tkinter import ttk, filedialog, messagebox
 import tkinter.font as tkfont
 
 APP = "NOT TUBE"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 COPYRIGHT = "\u00a92026 EX Inc./HYPERION DIGITAL \u00a92026"
 REPO = "Teobokki/not-tube"
 UPDATE_URL = "https://raw.githubusercontent.com/%s/main/latest.json" % REPO
@@ -41,6 +41,7 @@ INTENSITY_RANK = {"low": 1, "medium": 2, "rocket": 3}
 INTENSITY_SUB_PM = {"low": 2, "medium": 10, "rocket": 45}
 INTENSITY_CMT_S = {"low": 180, "medium": 90, "rocket": 24}
 BOOST_CATCHUP_CAP = 6 * 3600
+BOT_TARGET = 2000
 
 BOT_COMMENTS = [
     "great video",
@@ -935,17 +936,11 @@ class Library:
 
     # --- bot booster ---
     def _video_intensity(self, v):
-        cid = v.get("channel_id")
-        all_b = (self.data.get("boost_all") or {}).get(cid) or {}
-        vb = v.get("boost") or {}
-        cand = []
-        if all_b.get("on"):
-            cand.append(all_b.get("intensity") or "medium")
-        if vb.get("on"):
-            cand.append(vb.get("intensity") or "medium")
-        if not cand:
+        # NOT TUBE BOT ACCOUNTS are automated and always on, at Rocket speed,
+        # until the video reaches BOT_TARGET bot views.
+        if int(v.get("bot_views") or 0) >= BOT_TARGET:
             return None
-        return max(cand, key=lambda i: INTENSITY_RANK.get(i, 0))
+        return "rocket"
 
     def set_boost_all(self, cid, on, intensity="medium"):
         ba = self.data.setdefault("boost_all", {})
@@ -979,7 +974,8 @@ class Library:
             inten = self._video_intensity(v)
             if not inten:
                 continue
-            vb = v.setdefault("boost", {"on": False, "intensity": "medium", "last_tick": now})
+            vb = v.setdefault("boost", {"on": True, "intensity": "rocket", "last_tick": now})
+            vb["on"] = True; vb["intensity"] = "rocket"
             last = float(vb.get("last_tick") or now)
             elapsed = min(BOOST_CATCHUP_CAP, max(0.0, now - last))
             if elapsed < 0.25:
@@ -994,6 +990,7 @@ class Library:
                     views_add = random.randint(3, 12)
                 else:
                     views_add = 1 if random.random() < 0.8 else 0
+            views_add = max(0, min(views_add, BOT_TARGET - int(v.get("bot_views") or 0)))
             likes_add = int(round(views_add * random.uniform(0.015, 0.04)))
             if views_add and likes_add == 0 and random.random() < 0.25:
                 likes_add = 1
@@ -2680,23 +2677,10 @@ class App(tk.Tk):
 
     def _bot_live_text(self, ch):
         stats = self.lib.channel_stats(ch["id"]) if ch else {"bot_views": 0}
-        ba = (self.lib.data.get("boost_all") or {}).get((ch or {}).get("id") or "") or {}
-        # find a running intensity
-        inten = None
-        if ba.get("on"):
-            inten = ba.get("intensity") or "medium"
-        else:
-            for v in self.lib.channel_videos((ch or {}).get("id")):
-                if (v.get("boost") or {}).get("on"):
-                    i = (v.get("boost") or {}).get("intensity") or "medium"
-                    if inten is None or INTENSITY_RANK.get(i, 0) > INTENSITY_RANK.get(inten, 0):
-                        inten = i
-        if inten:
-            lo, hi = INTENSITY_VPM[inten]
-            mid = int((lo + hi) / 2)
-            return "Live  ·  %s bot views  ·  %s  ·  about %s/min" % (
-                fmt_count(stats["bot_views"]), inten.upper(), fmt_count(mid))
-        return "Live  ·  %s bot views  ·  booster off" % fmt_count(stats["bot_views"])
+        vids = self.lib.channel_videos((ch or {}).get("id")) if ch else []
+        done = sum(1 for v in vids if int(v.get("bot_views") or 0) >= BOT_TARGET)
+        return "NOT TUBE BOT ACCOUNTS: ACTIVE  ·  %s bot views  ·  ROCKET  ·  %d/%d videos at 2K" % (
+            fmt_count(stats["bot_views"]), done, len(vids))
 
     def _studio_content(self, parent, ch):
         sc = VScroll(parent, bg=BG)
@@ -2996,21 +2980,11 @@ class App(tk.Tk):
         tk.Label(hdr, text="NOT TUBE BOT ACCOUNTS", bg=BG, fg=TXT, font=(FONT_UI, 22, "bold"),
                  anchor="w").pack(fill="x")
         tk.Label(sc.inner,
-                 text="A local view booster. Simulated accounts (ntbot_4821 and similar) add views, likes, notscribers and occasional comments. Nothing leaves this computer.",
+                 text="Automated and always on. Bot accounts (ntbot_4821 and similar) push every video to 2K views, with likes, notscribers and comments. Nothing to switch on.",
                  bg=BG, fg=MUT, font=(FONT_UI, 12), wraplength=760, justify="left", anchor="w").pack(fill="x", padx=24, pady=(0, 12))
         self._bot_live_lbl = tk.Label(sc.inner, text=self._bot_live_text(ch), bg=CARD, fg=TXT,
                                       font=(FONT_UI, 13), anchor="w", padx=16, pady=12)
         self._bot_live_lbl.pack(fill="x", padx=24, pady=(0, 16))
-
-        ba = (self.lib.data.get("boost_all") or {}).get(ch["id"]) or {"on": False, "intensity": "medium"}
-        allf = tk.Frame(sc.inner, bg=CARD)
-        allf.pack(fill="x", padx=24, pady=(0, 16))
-        inner = tk.Frame(allf, bg=CARD)
-        inner.pack(fill="x", padx=14, pady=12)
-        tk.Label(inner, text="All my videos on this channel", bg=CARD, fg=TXT,
-                 font=(FONT_UI, 13, "bold"), anchor="w").pack(fill="x")
-        self._boost_controls(inner, on=bool(ba.get("on")), intensity=ba.get("intensity") or "medium",
-                             apply=lambda on, inten, cid=ch["id"]: self.lib.set_boost_all(cid, on, inten))
 
         tk.Label(sc.inner, text="Per video", bg=BG, fg=TXT, font=(FONT_UI, 16, "bold"),
                  anchor="w").pack(fill="x", padx=24, pady=(8, 8))
@@ -3034,9 +3008,9 @@ class App(tk.Tk):
             tk.Label(col, text=title, bg=BG, fg=TXT, font=(FONT_UI, 12, "bold"), anchor="w").pack(fill="x")
             tk.Label(col, text="%s  ·  %s bot views" % (fmt_views(v.get("views") or 0), fmt_count(v.get("bot_views") or 0)),
                      bg=BG, fg=MUT, font=(FONT_UI, 10), anchor="w").pack(fill="x")
-            b = v.get("boost") or {"on": False, "intensity": "medium"}
-            self._boost_controls(col, on=bool(b.get("on")), intensity=b.get("intensity") or "medium",
-                                 apply=lambda on, inten, vid=v["id"]: self.lib.set_boost_video(vid, on, inten))
+            bv = min(BOT_TARGET, int(v.get("bot_views") or 0))
+            tk.Label(col, text=("Reached 2K  ✓" if bv >= BOT_TARGET else "Bots active  ·  %s / 2K" % fmt_count(bv)),
+                     bg=BG, fg=TXT, font=(FONT_UI, 10, "bold"), anchor="w").pack(fill="x", pady=(4, 0))
 
     def _boost_controls(self, parent, on, intensity, apply):
         bar = tk.Frame(parent, bg=parent.cget("bg"))
