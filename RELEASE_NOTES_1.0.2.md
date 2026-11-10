@@ -1,0 +1,5 @@
+# NOT TUBE 1.0.2
+
+- The About popup now reads ©HYPERION SYSTEMS.
+
+©2026 EX Inc./HYPERION DIGITAL ©2026

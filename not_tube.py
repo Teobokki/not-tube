@@ -10,7 +10,7 @@ from tkinter import ttk, filedialog, messagebox
 import tkinter.font as tkfont
 
 APP = "NOT TUBE"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 COPYRIGHT = "\u00a92026 EX Inc./HYPERION DIGITAL \u00a92026"
 REPO = "Teobokki/not-tube"
 UPDATE_URL = "https://raw.githubusercontent.com/%s/main/latest.json" % REPO
@@ -3397,7 +3397,7 @@ class App(tk.Tk):
     def _about(self):
         messagebox.showinfo(
             APP,
-            "%s  %s\n\nA local video library.\n\n%s" % (APP, APP_VERSION, COPYRIGHT),
+            "%s  %s\n\nA local video library.\n\n%s" % (APP, APP_VERSION, "\u00a9HYPERION SYSTEMS"),
             parent=self,
         )
 
