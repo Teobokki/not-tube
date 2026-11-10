@@ -1,14 +1,14 @@
 {
-  "version": "1.0.0",
-  "url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.0/NOT-TUBE-Setup-1.0.0.exe",
-  "installer_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.0/NOT-TUBE-Setup-1.0.0.exe",
-  "full_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.0/NOT-TUBE-1.0.0-Windows-x64.zip",
-  "portable_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.0/NOT-TUBE-1.0.0-Windows-x64.zip",
-  "release_url": "https://github.com/Teobokki/not-tube/releases/tag/v1.0.0",
-  "sha256": "4bf2b5342f6eef1777f97c0987b7c962d11fcaa7a92a66357f959dd3e9f9ed32",
-  "size": 45698791,
-  "portable_sha256": "d7afec6e17bb47146a660d5b2c65af507f1b6b56aff4324d9356418f5face738",
-  "portable_size": 65325314,
+  "version": "1.0.1",
+  "url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.1/NOT-TUBE-Setup-1.0.1.exe",
+  "installer_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.1/NOT-TUBE-Setup-1.0.1.exe",
+  "full_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.1/NOT-TUBE-1.0.1-Windows-x64.zip",
+  "portable_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.1/NOT-TUBE-1.0.1-Windows-x64.zip",
+  "release_url": "https://github.com/Teobokki/not-tube/releases/tag/v1.0.1",
+  "sha256": "6fef71530b0a19d2f33a21c40a2e5699e0765ef1213efaa336fc6bb5350589d7",
+  "size": 45694449,
+  "portable_sha256": "e2ba10989c074a189606646238d1b488f44aae842807832c724952dbd3ebff93",
+  "portable_size": 65323346,
   "published": "2026-11-10",
-  "notes": "NOT TUBE 1.0.0 \u2014 local video library, NOT TUBE STUDIO, NOT SHORTS and NOT TUBE BOT ACCOUNTS."
+  "notes": "NOT TUBE 1.0.1 — bot accounts always on; every video goes to 2K views."
 }
