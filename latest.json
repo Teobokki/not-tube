@@ -1,14 +1,14 @@
 {
-  "version": "1.0.5",
-  "url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.5/NOT-TUBE-Setup-1.0.5.exe",
-  "installer_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.5/NOT-TUBE-Setup-1.0.5.exe",
-  "full_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.5/NOT-TUBE-1.0.5-Windows-x64.zip",
-  "portable_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.5/NOT-TUBE-1.0.5-Windows-x64.zip",
-  "release_url": "https://github.com/Teobokki/not-tube/releases/tag/v1.0.5",
-  "sha256": "38b3339ceeff54e0676407a52a5ce79a4404684e71e259c0452724d4fe70b083",
-  "size": 66935650,
-  "portable_sha256": "cdf111edb5e2db1f3b7e7e76d72755cc43dab3d49b04d078df16203d431968e8",
-  "portable_size": 86964449,
+  "version": "1.0.6",
+  "url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.6/NOT-TUBE-Setup-1.0.6.exe",
+  "installer_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.6/NOT-TUBE-Setup-1.0.6.exe",
+  "full_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.6/NOT-TUBE-1.0.6-Windows-x64.zip",
+  "portable_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.6/NOT-TUBE-1.0.6-Windows-x64.zip",
+  "release_url": "https://github.com/Teobokki/not-tube/releases/tag/v1.0.6",
+  "sha256": "ff86ffe8eb864985fd94b5cc10feda63d186e8e0fa4b6d6ac835899ed719edda",
+  "size": 66936551,
+  "portable_sha256": "1ae0f742088b423e7b4d9d6bd523770f2d0c4f1c66234be260b7c889134892c0",
+  "portable_size": 86965165,
   "published": "2026-11-11",
-  "notes": "NOT TUBE 1.0.5 \u2014 Kim Miyoyazu is now a Featured channel."
+  "notes": "NOT TUBE 1.0.6 \u2014 Your Kim Miyoyazu videos are now at the top of Home."
 }
