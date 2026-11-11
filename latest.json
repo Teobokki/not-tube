@@ -1,14 +1,14 @@
 {
-  "version": "1.0.4",
-  "url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.4/NOT-TUBE-Setup-1.0.4.exe",
-  "installer_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.4/NOT-TUBE-Setup-1.0.4.exe",
-  "full_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.4/NOT-TUBE-1.0.4-Windows-x64.zip",
-  "portable_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.4/NOT-TUBE-1.0.4-Windows-x64.zip",
-  "release_url": "https://github.com/Teobokki/not-tube/releases/tag/v1.0.4",
-  "sha256": "cee7c46bae91d27c290949c5f6f1e0a06c6edc63e1e62cc11f0931ba2f99707f",
-  "size": 66932882,
-  "portable_sha256": "ab8de4f1f0bfd579011d01ef035c2eabebdde0fb60b85375fa0bce71fad540d4",
-  "portable_size": 86962303,
+  "version": "1.0.5",
+  "url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.5/NOT-TUBE-Setup-1.0.5.exe",
+  "installer_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.5/NOT-TUBE-Setup-1.0.5.exe",
+  "full_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.5/NOT-TUBE-1.0.5-Windows-x64.zip",
+  "portable_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.5/NOT-TUBE-1.0.5-Windows-x64.zip",
+  "release_url": "https://github.com/Teobokki/not-tube/releases/tag/v1.0.5",
+  "sha256": "38b3339ceeff54e0676407a52a5ce79a4404684e71e259c0452724d4fe70b083",
+  "size": 66935650,
+  "portable_sha256": "cdf111edb5e2db1f3b7e7e76d72755cc43dab3d49b04d078df16203d431968e8",
+  "portable_size": 86964449,
   "published": "2026-11-11",
-  "notes": "NOT TUBE 1.0.4 — Glamorous try-on hauls on Featured channels, plus Owner tools."
+  "notes": "NOT TUBE 1.0.5 \u2014 Kim Miyoyazu is now a Featured channel."
 }
