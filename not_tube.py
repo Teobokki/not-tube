@@ -10,7 +10,7 @@ from tkinter import ttk, filedialog, messagebox
 import tkinter.font as tkfont
 
 APP = "NOT TUBE"
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 COPYRIGHT = "\u00a92026 EX Inc./HYPERION DIGITAL \u00a92026"
 REPO = "Teobokki/not-tube"
 UPDATE_URL = "https://raw.githubusercontent.com/%s/main/latest.json" % REPO
@@ -303,6 +303,35 @@ def normalize_handle(h, name=""):
 
 def bot_name():
     return "ntbot_%04d" % random.randint(0, 9999)
+
+
+def _is_kim_miyoyazu_channel(ch):
+    """True for the user's Kim Miyoyazu channel (handle or name, case-insensitive)."""
+    if not ch:
+        return False
+    raw = (ch.get("handle") or "").strip()
+    if raw and normalize_handle(raw, "").lower() == "@kimmiyoyazu":
+        return True
+    return (ch.get("name") or "").strip().lower() == "kim miyoyazu"
+
+
+def ensure_kim_miyoyazu_featured(lib):
+    """Idempotently feature the user's Kim Miyoyazu channel and keep it owned.
+    Does not touch its videos, description, or avatar."""
+    if lib is None:
+        return
+    changed = False
+    for ch in lib.channels():
+        if not _is_kim_miyoyazu_channel(ch):
+            continue
+        if not ch.get("featured"):
+            ch["featured"] = True
+            changed = True
+        if not ch.get("owned"):
+            ch["owned"] = True
+            changed = True
+    if changed:
+        lib.save()
 
 
 OWNER_USERNAME = "kimi"
@@ -649,7 +678,24 @@ class Library:
         return None
 
     def featured_channels(self):
-        return [c for c in self.channels() if c.get("featured")]
+        chs = [c for c in self.channels() if c.get("featured")]
+        bundled = {}
+        for i, spec in enumerate(FEATURED_CHANNELS):
+            bundled[(spec.get("handle") or "").strip().lower()] = i
+            bundled[(spec.get("name") or "").strip().lower()] = i
+
+        def sort_key(c):
+            if _is_kim_miyoyazu_channel(c):
+                return (0, 0)
+            h = normalize_handle(c.get("handle") or "", "").lower()
+            n = (c.get("name") or "").strip().lower()
+            rank = bundled.get(h)
+            if rank is None:
+                rank = bundled.get(n, 100)
+            return (1, rank)
+
+        chs.sort(key=sort_key)
+        return chs
 
     def haul_videos(self):
         out = []
@@ -2322,9 +2368,15 @@ class App(tk.Tk):
         ch = self.lib.get_channel(channel_id)
         if not ch:
             return None
-        on = self.lib.is_notscribed(channel_id)
         fr = tk.Frame(parent, bg=parent.cget("bg") if parent.cget("bg") else BG)
         fr.pack(side="left") if not compact else fr.pack(pady=(0, 4))
+        if ch.get("owned"):
+            pill = Pill(fr, "Your channel", cmd=lambda: self.open_channel(channel_id),
+                        fill=CARD, fg=TXT, hover=HOVER, radius=18, padx=14, pady=7,
+                        font=(FONT_UI, 10, "bold"))
+            pill.pack(side="left")
+            return fr
+        on = self.lib.is_notscribed(channel_id)
 
         def refresh():
             for w in fr.winfo_children():
@@ -2911,6 +2963,8 @@ class App(tk.Tk):
         if not v:
             return False
         ch = self.lib.get_channel(v.get("channel_id"))
+        if ch and ch.get("owned"):
+            return True
         if ch and ch.get("featured"):
             return is_owner_pc() and bool(v.get("owner_added"))
         return bool(ch and ch.get("owned", True))
@@ -3953,6 +4007,8 @@ def _is_bundled_featured_seed(lib, v):
     ch = lib.get_channel(v.get("channel_id"))
     if not ch or not ch.get("featured"):
         return False
+    if ch.get("owned"):
+        return False
     if v.get("seed_id"):
         return True
     sf = v.get("seed_file") or ""
@@ -3968,6 +4024,7 @@ def ensure_bundled_content(lib, include_classic=False):
     """Idempotently add featured (and optionally classic) bundled channels/videos.
     Replaces outdated bundled featured hauls by seed id. Never wipes user or
     owner-added uploads. Featured channels are not owned by the user."""
+    ensure_kim_miyoyazu_featured(lib)
     sdir = samples_dir()
     adir = channel_art_dir()
     tdir = thumbs_dir()
