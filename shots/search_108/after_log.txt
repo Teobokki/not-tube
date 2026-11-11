@@ -1,0 +1,28 @@
+shot Z:\workspace\not-tube\shots\search_108\after_01_idle.png
+idle bg-entry h=26 font=Roboto 12
+focus x2 -> paints=3
+shot Z:\workspace\not-tube\shots\search_108\after_02_focused_empty.png
+typing 11 keys: paints=11 pages=0 fills=0 max_key_ms=7.8 entry='try on haul'
+after-typing page=home fills=0
+shot Z:\workspace\not-tube\shots\search_108\after_03_typing.png
+enter: page=search q='try on haul' focus=.!frame.!frame3.!entry results=1
+shot Z:\workspace\not-tube\shots\search_108\after_04_results.png
+enter x3 same query: pages=0 fills=0
+'haul try' results=1
+shot Z:\workspace\not-tube\shots\search_108\after_05_multiword.png
+empty query: page=search results=1
+shot Z:\workspace\not-tube\shots\search_108\after_06_empty_query.png
+shot Z:\workspace\not-tube\shots\search_108\after_07_long_text.png
+long text xview=(0.0, 1.0)
+esc in search on watch -> page=shorts
+W=1280 overlap=(309, 949, []) entry_w=518
+shot Z:\workspace\not-tube\shots\search_108\after_08_w1280.png
+W=1100 overlap=(235, 769, []) entry_w=412
+shot Z:\workspace\not-tube\shots\search_108\after_08_w1100.png
+resize sweep 20 steps paints=14
+has clear=True
+shot Z:\workspace\not-tube\shots\search_108\after_09_clear_visible.png
+after clear text='' focus_in_search=True
+live typing 7 keys on results page: fills=1 q='leather' results=3 focus_in_search=True
+shot Z:\workspace\not-tube\shots\search_108\after_10_live_results.png
+shot Z:\workspace\not-tube\shots\search_108\after_11_unfocused_placeholder.png

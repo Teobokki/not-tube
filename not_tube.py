@@ -10,7 +10,7 @@ from tkinter import ttk, filedialog, messagebox
 import tkinter.font as tkfont
 
 APP = "NOT TUBE"
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 COPYRIGHT = "\u00a92026 EX Inc./HYPERION DIGITAL \u00a92026"
 REPO = "Teobokki/not-tube"
 UPDATE_URL = "https://raw.githubusercontent.com/%s/main/latest.json" % REPO
@@ -1100,22 +1100,29 @@ class Library:
     def comments_for(self, vid):
         return list(self.data.get("comments", {}).get(vid) or [])
 
+    @staticmethod
+    def _norm_text(t):
+        t = (t or "").lower()
+        return "".join(c if c.isalnum() else " " for c in t).split()
+
     def search(self, q):
-        q = (q or "").strip().lower()
-        if not q:
-            return self.videos()
-        out = []
-        for v in self.videos():
+        toks = self._norm_text(q)
+        if not toks:
+            return []
+        scored = []
+        for i, v in enumerate(self.videos()):
             ch = self.get_channel(v.get("channel_id")) or {}
-            blob = " ".join([
-                v.get("title") or "",
-                v.get("description") or "",
-                ch.get("name") or "",
-                ch.get("handle") or "",
-            ]).lower()
-            if q in blob:
-                out.append(v)
-        return out
+            title_t = self._norm_text(v.get("title"))
+            words = title_t + self._norm_text(v.get("description")) + \
+                self._norm_text(ch.get("name")) + self._norm_text(ch.get("handle"))
+            blob = " ".join(words)
+            flat = blob.replace(" ", "")
+            if all((t in blob) or (t in flat) for t in toks):
+                title = " ".join(title_t)
+                score = sum(2 for t in toks if t in title) + (3 if " ".join(toks) in title else 0)
+                scored.append((-score, i, v))
+        scored.sort(key=lambda x: (x[0], x[1]))
+        return [v for _s, _i, v in scored]
 
     def history_videos(self):
         found = []
@@ -1738,69 +1745,249 @@ class App(tk.Tk):
         self.avatar_lbl.bind("<Button-1>", lambda e: self._avatar_menu())
         self._refresh_avatar()
 
-        # centered search pill
+        # centered search pill (placed by x so it never overlaps the side controls)
+        self._left_bar = left
+        self._right_bar = right
         self.search_wrap = tk.Frame(top, bg=BAR)
         self._build_search_pill(self.search_wrap)
-        self.search_wrap.place(relx=0.5, rely=0.5, anchor="center")
-        top.bind("<Configure>", lambda e: self._place_search())
+        self.search_wrap.place(x=0, y=8, width=320, height=40)
+        self._place_job = None
+        top.bind("<Configure>", lambda e: self._queue_place_search())
+        self.after_idle(self._place_search)
 
         tk.Frame(self, bg=CARD, height=1).pack(fill="x")
+        # clicking anywhere outside the search box gives keyboard shortcuts back
+        self.bind_all("<ButtonPress-1>", self._search_click_away, add="+")
+
+    def _queue_place_search(self):
+        if self._place_job is None:
+            self._place_job = self.after_idle(self._place_search)
 
     def _place_search(self):
-        # keep the pill visually centered, shrink if needed
+        self._place_job = None
         try:
             tw = self.top.winfo_width()
+            lw = self._left_bar.winfo_reqwidth() + 4 + 8
+            rw = self._right_bar.winfo_reqwidth() + 12 * 2
         except Exception:
             return
-        w = min(640, max(280, tw - 620))
-        self.search_wrap.place_configure(relx=0.5, rely=0.5, anchor="center", width=w, height=40)
+        if tw < 50:
+            return
+        lo, hi = lw + 16, tw - rw - 16
+        w = int(min(640, max(200, hi - lo)))
+        x = int(tw / 2 - w / 2)
+        x = max(lo, min(x, hi - w))
+        x = max(0, x)
+        geo = (x, w)
+        if getattr(self, "_search_geo", None) == geo:
+            return
+        self._search_geo = geo
+        self.search_wrap.place_configure(x=x, y=8, width=w, height=40)
 
     def _build_search_pill(self, host):
         host.configure(bg=BAR)
-        self._search_canvas = tk.Canvas(host, bg=BAR, highlightthickness=0, bd=0, height=40)
+        self._search_canvas = tk.Canvas(host, bg=BAR, highlightthickness=0, bd=0, height=40,
+                                        takefocus=0)
         self._search_canvas.pack(fill="both", expand=True)
+        self._search_img_id = self._search_canvas.create_image(0, 0, anchor="nw")
+        self._search_key = None
+        self._search_hover = None   # None | "go" | "clear"
+        self._search_job = None
+        self._search_live_job = None
         self.search_var = tk.StringVar()
         self.search_entry = tk.Entry(
             host, textvariable=self.search_var, bg=SEARCH_BG, fg=TXT, insertbackground=TXT,
             relief="flat", bd=0, font=(FONT_UI, 12), highlightthickness=0,
+            selectbackground="#3a5f9e", selectforeground=TXT, exportselection=False,
         )
-        self.search_entry.bind("<Return>", lambda e: self.do_search())
-        self.search_entry.bind("<FocusIn>", lambda e: self._paint_search())
-        self._photos["ic_search"] = icon_photo("search", 18, TXT)
-        self.search_go = tk.Label(
-            host, image=self._photos["ic_search"], bg=SEARCH_BTN, cursor="hand2",
-            padx=16, pady=8,
-        )
-        self.search_go.bind("<Button-1>", lambda e: self.do_search())
-        host.bind("<Configure>", lambda e: self._paint_search())
+        self.search_hint = tk.Label(host, text="Search", bg=SEARCH_BG, fg="#888888",
+                                    font=(FONT_UI, 12), anchor="w", bd=0, padx=0, pady=0, cursor="xterm")
+        self.search_hint.bind("<Button-1>", lambda e: (self.search_entry.focus_set(), "break")[1])
+        e = self.search_entry
+        e.bind("<Return>", lambda ev: (self.do_search(), "break")[1])
+        e.bind("<KP_Enter>", lambda ev: (self.do_search(), "break")[1])
+        e.bind("<Escape>", self._search_escape)
+        e.bind("<Control-a>", self._search_select_all)
+        e.bind("<Control-A>", self._search_select_all)
+        e.bind("<Control-BackSpace>", self._search_del_word)
+        e.bind("<FocusIn>", lambda ev: self._search_focus_changed())
+        e.bind("<FocusOut>", lambda ev: self._search_focus_changed())
+        self.search_var.trace_add("write", lambda *a: self._search_text_changed())
+        cv = self._search_canvas
+        cv.bind("<Motion>", self._search_motion)
+        cv.bind("<Leave>", lambda ev: self._search_set_hover(None))
+        cv.bind("<Button-1>", self._search_canvas_click)
+        host.bind("<Configure>", lambda ev: self._queue_paint_search())
+
+    def _search_layout(self):
+        w, h = self.search_wrap.winfo_width(), self.search_wrap.winfo_height()
+        btn_w = 64
+        left_w = max(60, w - btn_w)
+        clear_w = 32
+        return w, h, btn_w, left_w, clear_w
+
+    def _queue_paint_search(self):
+        if self._search_job is None:
+            self._search_job = self.after_idle(self._paint_search)
+
+    def _search_focused(self):
+        try:
+            return self.focus_get() is self.search_entry
+        except Exception:
+            return False
 
     def _paint_search(self):
+        self._search_job = None
         cv = self._search_canvas
         try:
-            w, h = self.search_wrap.winfo_width(), self.search_wrap.winfo_height()
+            w, h, btn_w, left_w, clear_w = self._search_layout()
         except Exception:
             return
-        if w < 40 or h < 20:
+        if w < 60 or h < 20:
             return
-        cv.delete("all")
-        cv.configure(width=w, height=h)
-        btn_w = 64
-        left_w = max(40, w - btn_w)
-        r = h // 2
-        im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        d = ImageDraw.Draw(im)
-        d.rounded_rectangle((0, 0, left_w + 2, h - 1), r, fill=SEARCH_BG, outline=BORDER, width=1)
-        d.rounded_rectangle((left_w - r, 0, w - 1, h - 1), r, fill=SEARCH_BTN)
-        d.rectangle((left_w - r, 1, left_w, h - 2), fill=SEARCH_BTN)
-        ph = photo_of(im)
-        self._photos["search_bg"] = ph
-        cv.create_image(0, 0, image=ph, anchor="nw")
-        # place entry and button on top of canvas
-        self.search_entry.place(x=16, y=8, width=left_w - 28, height=h - 16)
-        self.search_go.place(x=left_w, y=0, width=btn_w, height=h)
-        self.search_go.configure(bg=SEARCH_BTN)
-        self.search_entry.lift()
-        self.search_go.lift()
+        focused = self._search_focused()
+        has_text = bool(self.search_var.get())
+        key = (w, h, focused, has_text, self._search_hover)
+        if key != self._search_key:
+            self._search_key = key
+            ss = 3  # supersample for smooth round ends
+            W, H = w * ss, h * ss
+            bg = hex_rgb(BAR)
+            im = Image.new("RGB", (W, H), bg)
+            d = ImageDraw.Draw(im)
+            r = H // 2
+            border = (28, 98, 185) if focused else hex_rgb(BORDER)
+            btn = hex_rgb(HOVER) if self._search_hover == "go" else hex_rgb(SEARCH_BTN)
+            # whole pill in button colour, then the field on top: one clean outline
+            d.rounded_rectangle((0, 0, W - 1, H - 1), r, fill=btn, outline=border, width=ss)
+            fl = left_w * ss
+            d.rounded_rectangle((0, 0, fl, H - 1), r, fill=hex_rgb(SEARCH_BG), outline=border, width=ss)
+            d.rectangle((fl - r, ss, fl - ss, H - 1 - ss), fill=hex_rgb(SEARCH_BG))
+            d.line((fl, 0, fl, H - 1), fill=border, width=ss)
+            im = im.resize((w, h), Image.Resampling.LANCZOS)
+            ic = _icon_im("search", 18, TXT)
+            im.paste(ic, (left_w + (btn_w - 18) // 2, (h - 18) // 2), ic)
+            if has_text:
+                cx = left_w - clear_w // 2 - 4
+                cy = h // 2
+                d2 = ImageDraw.Draw(im)
+                if self._search_hover == "clear":
+                    d2.ellipse((cx - 13, cy - 13, cx + 13, cy + 13), fill=hex_rgb(CARD))
+                k = 5
+                d2.line((cx - k, cy - k, cx + k, cy + k), fill=hex_rgb(TXT), width=2)
+                d2.line((cx - k, cy + k, cx + k, cy - k), fill=hex_rgb(TXT), width=2)
+            ph = photo_of(im)
+            self._photos["search_bg"] = ph
+            cv.itemconfigure(self._search_img_id, image=ph)
+        ew = left_w - 20 - (clear_w + 6 if has_text else 12)
+        eh = 26
+        geo = (20, (h - eh) // 2, max(20, ew), eh)
+        if getattr(self, "_search_entry_geo", None) != geo:
+            self._search_entry_geo = geo
+            self.search_entry.place(x=geo[0], y=geo[1], width=geo[2], height=geo[3])
+        if has_text or focused:
+            if self.search_hint.winfo_ismapped():
+                self.search_hint.place_forget()
+        else:
+            self.search_hint.place(x=geo[0] + 1, y=geo[1], width=geo[2] - 1, height=geo[3])
+            self.search_hint.lift()
+
+    def _search_hit(self, x):
+        try:
+            w, h, btn_w, left_w, clear_w = self._search_layout()
+        except Exception:
+            return None
+        if x >= left_w:
+            return "go"
+        if self.search_var.get() and x >= left_w - clear_w - 8:
+            return "clear"
+        return None
+
+    def _search_motion(self, ev):
+        hit = self._search_hit(ev.x)
+        self._search_set_hover(hit)
+        self._search_canvas.configure(cursor="hand2" if hit else "xterm")
+
+    def _search_set_hover(self, hit):
+        if hit != self._search_hover:
+            self._search_hover = hit
+            self._queue_paint_search()
+
+    def _search_canvas_click(self, ev):
+        hit = self._search_hit(ev.x)
+        if hit == "go":
+            self.do_search()
+        elif hit == "clear":
+            self.search_clear()
+        else:
+            self.search_entry.focus_set()
+            self.search_entry.icursor("end")
+        return "break"
+
+    def search_clear(self):
+        self.search_var.set("")
+        self.search_entry.focus_set()
+
+    def _search_focus_changed(self):
+        self._queue_paint_search()
+
+    def _search_text_changed(self):
+        self._queue_paint_search()
+        # live results only while the results page is already open; debounced
+        if self._search_live_job is not None:
+            try:
+                self.after_cancel(self._search_live_job)
+            except Exception:
+                pass
+            self._search_live_job = None
+        if self.page == "search":
+            self._search_live_job = self.after(350, self._search_live)
+
+    def _search_live(self):
+        self._search_live_job = None
+        if self.page != "search":
+            return
+        q = (self.search_var.get() or "").strip()
+        if not q or q == self.search_q:
+            return
+        self._run_search(q)
+
+    def _search_escape(self, ev):
+        if self.search_var.get():
+            self.search_var.set("")
+        else:
+            self.focus_set()
+        return "break"
+
+    def _search_select_all(self, ev):
+        self.search_entry.selection_range(0, "end")
+        self.search_entry.icursor("end")
+        return "break"
+
+    def _search_del_word(self, ev):
+        e = self.search_entry
+        i = e.index("insert")
+        t = self.search_var.get()
+        j = i
+        while j > 0 and t[j - 1] == " ":
+            j -= 1
+        while j > 0 and t[j - 1] != " ":
+            j -= 1
+        e.delete(j, i)
+        return "break"
+
+    def _search_click_away(self, ev):
+        try:
+            if self.focus_get() is not self.search_entry:
+                return
+            w = ev.widget
+            if w in (self.search_entry, self._search_canvas, self.search_hint, self.search_wrap):
+                return
+            if isinstance(w, (tk.Entry, tk.Text)):
+                return
+            self.focus_set()
+        except Exception:
+            pass
 
     def _refresh_avatar(self):
         ch = self.lib.current_channel()
@@ -2000,9 +2187,29 @@ class App(tk.Tk):
         self._refresh_avatar()
 
     def do_search(self):
-        self.search_q = (self.search_var.get() or "").strip()
+        if getattr(self, "_search_live_job", None) is not None:
+            try:
+                self.after_cancel(self._search_live_job)
+            except Exception:
+                pass
+            self._search_live_job = None
+        q = " ".join((self.search_var.get() or "").split())
+        if not q:
+            # empty search: stay put, just keep the cursor in the box
+            self.search_entry.focus_set()
+            return
+        if q == self.search_q and self.page == "search":
+            return  # same results already on screen; no rebuild/flicker
+        self._run_search(q)
+
+    def _run_search(self, q):
+        self.search_q = q
         self.chip = "All"
-        self.show_page("search")
+        if self.page == "search":
+            # refresh results only; sidebar/chips/top bar stay as they are
+            self._fill_home(search=True)
+        else:
+            self.show_page("search")
 
     def open_watch(self, vid):
         v = self.lib.get_video(vid)

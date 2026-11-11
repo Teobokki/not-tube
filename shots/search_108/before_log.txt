@@ -1,0 +1,25 @@
+shot Z:\workspace\not-tube\shots\search_108\before_01_idle.png
+idle bg-entry h=24 font=Roboto 12
+focus x2 -> paints=2
+shot Z:\workspace\not-tube\shots\search_108\before_02_focused_empty.png
+typing 11 keys: paints=0 pages=0 fills=0 max_key_ms=1.4 entry='try on haul'
+after-typing page=home fills=0
+shot Z:\workspace\not-tube\shots\search_108\before_03_typing.png
+enter: page=search q='try on haul' focus=.!frame.!frame3.!entry results=0
+shot Z:\workspace\not-tube\shots\search_108\before_04_results.png
+enter x3 same query: pages=3 fills=3
+'haul try' results=0
+shot Z:\workspace\not-tube\shots\search_108\before_05_multiword.png
+empty query: page=search results=25
+shot Z:\workspace\not-tube\shots\search_108\before_06_empty_query.png
+shot Z:\workspace\not-tube\shots\search_108\before_07_long_text.png
+long text xview=(0.0, 1.0)
+esc in search on watch -> page=home
+W=1280 overlap=(344, 984, [('Frame', 977, 1292)]) entry_w=548
+shot Z:\workspace\not-tube\shots\search_108\before_08_w1280.png
+W=1000 overlap=(334, 814, [('Frame', 797, 1112)]) entry_w=388
+shot Z:\workspace\not-tube\shots\search_108\before_08_w1000.png
+W=860 overlap=(334, 814, [('Frame', 797, 1112)]) entry_w=388
+shot Z:\workspace\not-tube\shots\search_108\before_08_w860.png
+resize sweep 20 steps paints=22
+has clear_btn=False

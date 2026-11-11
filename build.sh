@@ -1,12 +1,13 @@
 #!/bin/sh
-# ONE Windows build: PyInstaller onedir -> Inno Setup installer + portable zip
+# ONE Windows build: PyInstaller onedir -> Inno Setup installer, plus ONE standalone portable .exe (no zip)
 set -e
 export PATH=/workspace/wine-portable/current/bin:$PATH WINEPREFIX=/workspace/exwifi/.wine WINEDEBUG=-all
 cd /workspace/not-tube
-V=1.0.7
-rm -rf build "dist/NOT TUBE"
+V=1.0.8
+rm -rf build "dist/NOT TUBE" dist/NOT-TUBE-PORTABLE.exe
 wine 'C:\Python311\python.exe' -m PyInstaller --noconfirm "NOT TUBE.spec" > pyi.log 2>&1; echo PYI_DONE
 wine 'C:\InnoSetup\ISCC.exe' installer.iss > iss.log 2>&1; echo ISS_DONE
-cd dist && rm -f NOT-TUBE-$V-Windows-x64.zip && python3 -c "import shutil;shutil.make_archive('NOT-TUBE-$V-Windows-x64','zip','.','NOT TUBE')" && echo ZIP_DONE
-ls -la
-sha256sum "NOT-TUBE-Setup-$V.exe" "NOT-TUBE-$V-Windows-x64.zip"
+wine 'C:\Python311\python.exe' -m PyInstaller --noconfirm "NOT TUBE Portable.spec" > pyi_portable.log 2>&1; echo PYI_PORTABLE_DONE
+mv -f dist/NOT-TUBE-PORTABLE.exe "dist/NOT-TUBE-$V-Portable.exe"
+cd dist && ls -la "NOT-TUBE-Setup-$V.exe" "NOT-TUBE-$V-Portable.exe"
+sha256sum "NOT-TUBE-Setup-$V.exe" "NOT-TUBE-$V-Portable.exe"
