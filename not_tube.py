@@ -10,7 +10,7 @@ from tkinter import ttk, filedialog, messagebox
 import tkinter.font as tkfont
 
 APP = "NOT TUBE"
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 COPYRIGHT = "\u00a92026 EX Inc./HYPERION DIGITAL \u00a92026"
 REPO = "Teobokki/not-tube"
 UPDATE_URL = "https://raw.githubusercontent.com/%s/main/latest.json" % REPO
@@ -696,6 +696,13 @@ class Library:
 
         chs.sort(key=sort_key)
         return chs
+
+    def kim_miyoyazu_channel(self):
+        """The user's owned Kim Miyoyazu channel, if present."""
+        for c in self.channels():
+            if _is_kim_miyoyazu_channel(c) and c.get("owned"):
+                return c
+        return None
 
     def haul_videos(self):
         out = []
@@ -1951,21 +1958,29 @@ class App(tk.Tk):
             tk.Label(top, text="Search results for “%s”" % q, bg=BG, fg=TXT,
                      font=(FONT_UI, 16, "bold"), anchor="w").pack(fill="x", pady=(4, 8))
         else:
-            if self.chip in ("All", "Try-on hauls"):
-                self._featured_channels_shelf(host.inner)
             if self.chip == "All":
-                self._hauls_shelf(host.inner)
+                kim_ids = self._kim_videos_shelf(host.inner) or set()
+                self._hauls_shelf(host.inner, exclude_ids=kim_ids)
+                self._featured_channels_shelf(host.inner)
+            elif self.chip == "Try-on hauls":
+                self._featured_channels_shelf(host.inner)
             if self.lib.shorts() and self.chip != "Try-on hauls":
                 self._shorts_shelf(host.inner)
         vids = self._filtered_home()
         if (not search) and self.chip == "All":
             haul_ids = {v["id"] for v in self.lib.haul_videos()}
             vids = [v for v in vids if v["id"] not in haul_ids]
+            kim = self.lib.kim_miyoyazu_channel()
+            if kim:
+                kim_ids = {v["id"] for v in self.lib.long_videos(kim["id"])}
+                vids = [v for v in vids if v["id"] not in kim_ids]
         self._grid_box = tk.Frame(host.inner, bg=BG)
         self._grid_box.pack(fill="both", expand=True, padx=16, pady=8)
         self._grid_vids = vids
         if not vids:
-            if (not search) and self.chip == "All" and (self.lib.haul_videos() or self.lib.featured_channels()):
+            kim = self.lib.kim_miyoyazu_channel()
+            has_kim = bool(kim and self.lib.long_videos(kim["id"]))
+            if (not search) and self.chip == "All" and (has_kim or self.lib.haul_videos() or self.lib.featured_channels()):
                 return
             msg = "No videos match that search." if search else "No videos yet. Click Create to upload in NOT TUBE STUDIO."
             tk.Label(self._grid_box, text=msg, bg=BG, fg=MUT, font=(FONT_UI, 13)).pack(pady=80)
@@ -2091,6 +2106,42 @@ class App(tk.Tk):
         else:
             self.show_page(k)
 
+    def _kim_videos_shelf(self, parent):
+        """Home All: user's Kim Miyoyazu videos first. Returns their video ids, or empty set."""
+        ch = self.lib.kim_miyoyazu_channel()
+        if not ch:
+            return set()
+        vids = list(self.lib.long_videos(ch["id"]))
+        vids.sort(key=lambda v: v.get("uploaded") or "", reverse=True)
+        if not vids:
+            return set()
+        wrap = tk.Frame(parent, bg=BG)
+        wrap.pack(fill="x", padx=16, pady=(4, 16))
+        hdr = tk.Frame(wrap, bg=BG, cursor="hand2")
+        hdr.pack(fill="x", padx=8, pady=(0, 10))
+        av = tk.Label(hdr, image=self._avatar_photo(ch, 28), bg=BG, bd=0, cursor="hand2")
+        av.pack(side="left", padx=(0, 8))
+        title = tk.Label(hdr, text=ch.get("name") or "Kim Miyoyazu", bg=BG, fg=TXT,
+                         font=(FONT_UI, 16, "bold"), cursor="hand2")
+        title.pack(side="left")
+        see = tk.Label(hdr, text="See all  ›", bg=BG, fg=MUT, font=(FONT_UI, 11), cursor="hand2")
+        see.pack(side="right")
+
+        def open_ch(_e=None, cid=ch["id"]):
+            self.open_channel(cid)
+
+        for w in (hdr, av, title, see):
+            w.bind("<Button-1>", open_ch)
+        row = None
+        for i, v in enumerate(vids):
+            if i % 4 == 0:
+                row = tk.Frame(wrap, bg=BG)
+                row.pack(fill="x")
+            cell = tk.Frame(row, bg=BG)
+            cell.pack(side="left", padx=8, anchor="n")
+            self._video_card(cell, v, 240, int(240 * 9 / 16))
+        return {v["id"] for v in vids}
+
     def _featured_channels_shelf(self, parent):
         chs = self.lib.featured_channels()
         if not chs:
@@ -2151,8 +2202,10 @@ class App(tk.Tk):
                 pass
         self.after_idle(bind_kids)
 
-    def _hauls_shelf(self, parent):
+    def _hauls_shelf(self, parent, exclude_ids=None):
         vids = self.lib.haul_videos()
+        if exclude_ids:
+            vids = [v for v in vids if v.get("id") not in exclude_ids]
         if not vids:
             return
         wrap = tk.Frame(parent, bg=BG)
