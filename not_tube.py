@@ -10,7 +10,7 @@ from tkinter import ttk, filedialog, messagebox
 import tkinter.font as tkfont
 
 APP = "NOT TUBE"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 COPYRIGHT = "\u00a92026 EX Inc./HYPERION DIGITAL \u00a92026"
 REPO = "Teobokki/not-tube"
 UPDATE_URL = "https://raw.githubusercontent.com/%s/main/latest.json" % REPO
@@ -619,6 +619,25 @@ class Library:
                 return c
         return None
 
+    def get_channel_by_handle(self, handle, name=""):
+        h = normalize_handle(handle, name).lower()
+        for c in self.channels():
+            if normalize_handle(c.get("handle") or "", c.get("name") or "").lower() == h:
+                return c
+        return None
+
+    def featured_channels(self):
+        return [c for c in self.channels() if c.get("featured")]
+
+    def haul_videos(self):
+        out = []
+        for v in self.videos():
+            if v.get("is_short"):
+                continue
+            if v.get("category") == "haul" or (v.get("seed_file") or "").endswith("-haul.mp4"):
+                out.append(v)
+        return out
+
     def current_channel(self):
         cid = self.data.get("current_channel_id") or ""
         c = self.get_channel(cid)
@@ -638,7 +657,7 @@ class Library:
         return False
 
     def add_channel(self, name, handle="", description="", avatar="", banner="",
-                    owned=True, subscribers=0, created=None):
+                    owned=True, subscribers=0, created=None, featured=False):
         cid = new_id("ch")
         ch = {
             "id": cid,
@@ -651,6 +670,7 @@ class Library:
             "bot_subscribers": 0,
             "created": created or time.strftime("%Y-%m-%dT%H:%M:%S"),
             "owned": bool(owned),
+            "featured": bool(featured),
         }
         self.data.setdefault("channels", []).append(ch)
         if owned and not self.data.get("current_channel_id"):
@@ -718,7 +738,7 @@ class Library:
         return [v for v in vids if not v.get("is_short")]
 
     def import_video(self, src, title, description, channel_id, thumb_src=None, uploaded=None,
-                     views=0, likes=0, is_short=None):
+                     views=0, likes=0, is_short=None, seed_file=None, category=""):
         if not src or not os.path.isfile(src):
             raise FileNotFoundError(src)
         ch = self.get_channel(channel_id)
@@ -764,6 +784,8 @@ class Library:
             "bot_views": 0,
             "is_short": is_short,
             "boost": {"on": False, "intensity": "medium", "last_tick": time.time()},
+            "seed_file": seed_file or os.path.basename(src),
+            "category": (category or "").strip(),
         }
         self.data.setdefault("videos", []).insert(0, entry)
         self.save()
@@ -1351,6 +1373,10 @@ class App(tk.Tk):
                 pass
 
         self.lib = Library()
+        try:
+            ensure_bundled_content(self.lib)
+        except Exception:
+            pass
         self.page = "home"
         self.sidebar_open = True
         self.chip = "All"
@@ -1679,6 +1705,12 @@ class App(tk.Tk):
         bar = tk.Frame(self.chip_host, bg=BG)
         bar.pack(fill="x", padx=16, pady=(10, 8))
         chips = ["All"]
+        if self.lib.haul_videos() and "Try-on hauls" not in chips:
+            chips.append("Try-on hauls")
+        for ch in self.lib.featured_channels():
+            n = ch.get("name") or ""
+            if n and n not in chips:
+                chips.append(n)
         for ch in self.lib.channels():
             n = ch.get("name") or ""
             if n and n not in chips:
@@ -1811,6 +1843,8 @@ class App(tk.Tk):
         vids = [v for v in self.lib.videos() if not v.get("is_short")]
         if self.chip == "All":
             return vids
+        if self.chip == "Try-on hauls":
+            return self.lib.haul_videos()
         if self.chip == "Recently uploaded":
             return sorted(vids, key=lambda v: v.get("uploaded") or "", reverse=True)
         if self.chip == "Watched":
@@ -1832,13 +1866,23 @@ class App(tk.Tk):
             q = self.search_q
             tk.Label(top, text="Search results for “%s”" % q, bg=BG, fg=TXT,
                      font=(FONT_UI, 16, "bold"), anchor="w").pack(fill="x", pady=(4, 8))
-        elif self.lib.shorts():
-            self._shorts_shelf(host.inner)
+        else:
+            if self.chip in ("All", "Try-on hauls"):
+                self._featured_channels_shelf(host.inner)
+            if self.chip == "All":
+                self._hauls_shelf(host.inner)
+            if self.lib.shorts() and self.chip != "Try-on hauls":
+                self._shorts_shelf(host.inner)
         vids = self._filtered_home()
+        if (not search) and self.chip == "All":
+            haul_ids = {v["id"] for v in self.lib.haul_videos()}
+            vids = [v for v in vids if v["id"] not in haul_ids]
         self._grid_box = tk.Frame(host.inner, bg=BG)
         self._grid_box.pack(fill="both", expand=True, padx=16, pady=8)
         self._grid_vids = vids
         if not vids:
+            if (not search) and self.chip == "All" and (self.lib.haul_videos() or self.lib.featured_channels()):
+                return
             msg = "No videos match that search." if search else "No videos yet. Click Create to upload in NOT TUBE STUDIO."
             tk.Label(self._grid_box, text=msg, bg=BG, fg=MUT, font=(FONT_UI, 13)).pack(pady=80)
             return
@@ -1962,6 +2006,93 @@ class App(tk.Tk):
             self.open_shorts(self.shorts_id)
         else:
             self.show_page(k)
+
+    def _featured_channels_shelf(self, parent):
+        chs = self.lib.featured_channels()
+        if not chs:
+            return
+        wrap = tk.Frame(parent, bg=BG)
+        wrap.pack(fill="x", padx=16, pady=(4, 16))
+        hdr = tk.Frame(wrap, bg=BG)
+        hdr.pack(fill="x", padx=8, pady=(0, 10))
+        tk.Label(hdr, text="Featured channels", bg=BG, fg=TXT,
+                 font=(FONT_UI, 16, "bold")).pack(side="left")
+        row = tk.Frame(wrap, bg=BG)
+        row.pack(fill="x")
+        for ch in chs:
+            self._featured_channel_card(row, ch)
+
+    def _featured_channel_card(self, parent, ch):
+        cell = tk.Frame(parent, bg=BG, width=168, height=236)
+        cell.pack(side="left", padx=10, anchor="n")
+        cell.pack_propagate(False)
+
+        def open_ch(_e=None, cid=ch["id"]):
+            self.open_channel(cid)
+
+        av = tk.Label(cell, image=self._avatar_photo(ch, 88), bg=BG, bd=0, cursor="hand2")
+        av.pack(pady=(2, 8))
+        name = tk.Label(cell, text=ch.get("name") or "", bg=BG, fg=TXT,
+                        font=(FONT_UI, 11, "bold"), wraplength=156, justify="center",
+                        cursor="hand2")
+        name.pack()
+        sub_lbl = tk.Label(cell, text=fmt_views(ch.get("subscribers") or 0, "notscribers"),
+                           bg=BG, fg=MUT, font=(FONT_UI, 10), wraplength=156, justify="center")
+        sub_lbl.pack(pady=(2, 8))
+        for w in (av, name):
+            w.bind("<Button-1>", open_ch)
+
+        def after():
+            c = self.lib.get_channel(ch["id"]) or ch
+            try:
+                if sub_lbl.winfo_exists():
+                    sub_lbl.configure(text=fmt_views(c.get("subscribers") or 0, "notscribers"))
+            except tk.TclError:
+                pass
+
+        host = tk.Frame(cell, bg=BG)
+        host.pack()
+        self._notscribe_btn(host, ch["id"], compact=True)
+
+        def hook(_e=None):
+            self.after(120, after)
+        host.bind("<Button-1>", hook, add="+")
+        def bind_kids():
+            try:
+                for w in host.winfo_children():
+                    w.bind("<Button-1>", hook, add="+")
+                    for k in w.winfo_children():
+                        k.bind("<Button-1>", hook, add="+")
+            except tk.TclError:
+                pass
+        self.after_idle(bind_kids)
+
+    def _hauls_shelf(self, parent):
+        vids = self.lib.haul_videos()
+        if not vids:
+            return
+        wrap = tk.Frame(parent, bg=BG)
+        wrap.pack(fill="x", padx=16, pady=(0, 16))
+        hdr = tk.Frame(wrap, bg=BG, cursor="hand2")
+        hdr.pack(fill="x", padx=8, pady=(0, 10))
+        tk.Label(hdr, text="Try-on hauls", bg=BG, fg=TXT,
+                 font=(FONT_UI, 16, "bold")).pack(side="left")
+        see = tk.Label(hdr, text="See all  ›", bg=BG, fg=MUT, font=(FONT_UI, 11), cursor="hand2")
+        see.pack(side="right")
+
+        def all_hauls(_e=None):
+            self._set_chip("Try-on hauls")
+
+        for w in (hdr, see):
+            w.bind("<Button-1>", all_hauls)
+        row = None
+        for i, v in enumerate(vids):
+            if i % 4 == 0:
+                row = tk.Frame(wrap, bg=BG)
+                row.pack(fill="x")
+            cell = tk.Frame(row, bg=BG)
+            cell.pack(side="left", padx=8, anchor="n")
+            self._video_card(cell, v, 240, int(240 * 9 / 16))
 
     def _shorts_shelf(self, parent):
         shorts = self.lib.shorts()
@@ -3473,6 +3604,64 @@ def get_pil_font(size):
 
 
 # -------------------- seed / smoke / shots / main --------------------
+FEATURED_CHANNELS = [
+    dict(slug="miravalefits", name="Mira Vale Fits", handle="@miravalefits",
+         description="Everyday try-on hauls from a bright loft. Coats, knits and denim.",
+         color_subs=28400, featured=True),
+    dict(slug="novaquinnstyle", name="Nova Quinn Style", handle="@novaquinnstyle",
+         description="Clean workwear and soft everyday sets, filmed in a quiet studio.",
+         color_subs=19200, featured=True),
+    dict(slug="linapalomalooks", name="Lina Paloma Looks", handle="@linapalomalooks",
+         description="Sunlit apartment try-ons: midi dresses, denim jackets and weekend skirts.",
+         color_subs=22100, featured=True),
+    dict(slug="sablewrenwardrobe", name="Sable Wren Wardrobe", handle="@sablewrenwardrobe",
+         description="Utility jackets, wool coats and everyday denim from an industrial loft.",
+         color_subs=31600, featured=True),
+]
+
+FEATURED_VIDEOS = [
+    dict(file="mira-trench-jeans-haul.mp4", thumb="mira_trench_jeans_thumb.jpg",
+         title="Autumn trench + wide-leg jeans haul",
+         channel="Mira Vale Fits",
+         description="A camel trench over a white tee, wide-leg jeans and white sneakers. Filmed in the loft.",
+         days=1, views=860, likes=54, category="haul"),
+    dict(file="mira-weekend-knit-haul.mp4", thumb="mira_knit_denim_thumb.jpg",
+         title="Weekend knit and denim try-on",
+         channel="Mira Vale Fits",
+         description="An oversized cream sweater, straight jeans and brown ankle boots.",
+         days=4, views=640, likes=41, category="haul"),
+    dict(file="nova-workwear-blazer-haul.mp4", thumb="nova_blazer_trousers_thumb.jpg",
+         title="Workwear blazer try-on",
+         channel="Nova Quinn Style",
+         description="Navy blazer, white shirt, tailored trousers and loafers.",
+         days=2, views=1120, likes=68, category="haul"),
+    dict(file="nova-beige-set-haul.mp4", thumb="nova_beige_set_thumb.jpg",
+         title="Soft beige set haul",
+         channel="Nova Quinn Style",
+         description="A long beige cardigan, cream trousers and tan sneakers.",
+         days=6, views=490, likes=33, category="haul"),
+    dict(file="lina-floral-midi-haul.mp4", thumb="lina_floral_denim_thumb.jpg",
+         title="Sunday midi dress + denim jacket haul",
+         channel="Lina Paloma Looks",
+         description="A modest floral midi dress, a classic denim jacket and white sneakers.",
+         days=1, views=980, likes=61, category="haul"),
+    dict(file="lina-denim-skirt-haul.mp4", thumb="lina_jacket_skirt_thumb.jpg",
+         title="Denim jacket and midi skirt try-on",
+         channel="Lina Paloma Looks",
+         description="A denim jacket, white tee, khaki midi skirt and ankle boots.",
+         days=5, views=720, likes=44, category="haul"),
+    dict(file="sable-utility-jacket-haul.mp4", thumb="sable_utility_jeans_thumb.jpg",
+         title="Utility jacket and jeans try-on",
+         channel="Sable Wren Wardrobe",
+         description="An olive utility jacket, white tee, straight jeans and white sneakers.",
+         days=2, views=1340, likes=77, category="haul"),
+    dict(file="sable-wool-coat-haul.mp4", thumb="sable_wool_coat_thumb.jpg",
+         title="Wool coat and mock-neck haul",
+         channel="Sable Wren Wardrobe",
+         description="A long charcoal wool coat over a forest-green mock-neck, dark jeans and chelsea boots.",
+         days=7, views=580, likes=39, category="haul"),
+]
+
 SAMPLE_CHANNELS = [
     dict(slug="bluehour", name="Blue Hour Films", handle="@bluehour",
          description="Still mornings and long lenses.", color_subs=12400),
@@ -3547,108 +3736,152 @@ SAMPLE_SHORTS = [
 ]
 
 
-def samples_dir():
+def _bundle_dirs(*parts):
+    here = os.path.dirname(os.path.abspath(__file__))
+    exe = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, "frozen", False) else here
     cands = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "samples"),
-        res_path("samples"),
-        r"Z:\workspace\not-tube\samples",
-        "/workspace/not-tube/samples",
+        os.path.join(here, *parts),
+        res_path(*parts),
+        os.path.join(exe, *parts),
+        os.path.join(exe, "_internal", *parts),
+        os.path.join(r"Z:\workspace\not-tube", *parts),
+        os.path.join("/workspace/not-tube", *parts),
     ]
     for d in cands:
         if d and os.path.isdir(d):
             return d
     return cands[0]
+
+
+def samples_dir():
+    return _bundle_dirs("samples")
 
 
 def channel_art_dir():
-    cands = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "channels"),
-        res_path("assets", "channels"),
-        r"Z:\workspace\not-tube\assets\channels",
-        "/workspace/not-tube/assets/channels",
-    ]
-    for d in cands:
-        if d and os.path.isdir(d):
-            return d
-    return cands[0]
+    return _bundle_dirs("assets", "channels")
+
+
+def thumbs_dir():
+    return _bundle_dirs("samples", "thumbs")
+
+
+def _art_file(adir, slug, kind):
+    for ext in (".png", ".jpg", ".jpeg", ".webp"):
+        p = os.path.join(adir, "%s_%s%s" % (slug, kind, ext))
+        if os.path.isfile(p):
+            return p
+    return ""
+
+
+def _has_seed_video(lib, filename, title=None, channel_id=None):
+    for v in lib.videos():
+        if channel_id and v.get("channel_id") != channel_id:
+            continue
+        if (v.get("seed_file") or "") == filename:
+            return True
+        if title and (v.get("title") or "") == title:
+            return True
+    return False
+
+
+def ensure_bundled_content(lib, include_classic=False):
+    """Idempotently add featured (and optionally classic) bundled channels/videos.
+    Never wipes user data. Featured channels are not owned by the user."""
+    sdir = samples_dir()
+    adir = channel_art_dir()
+    tdir = thumbs_dir()
+    now = time.time()
+    specs = list(FEATURED_CHANNELS)
+    if include_classic:
+        specs += list(SAMPLE_CHANNELS)
+    by_name = {}
+    for spec in specs:
+        featured = bool(spec.get("featured"))
+        owned = (not featured) and bool(spec.get("owned", include_classic and not featured))
+        ch = lib.get_channel_by_handle(spec["handle"], spec["name"]) or lib.get_channel_by_name(spec["name"])
+        if not ch:
+            ch = lib.add_channel(
+                spec["name"], spec["handle"], spec["description"],
+                owned=owned, subscribers=spec["color_subs"], featured=featured,
+                created=time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now - 86400 * 80)),
+            )
+        else:
+            if featured and not ch.get("featured"):
+                ch["featured"] = True
+        av = _art_file(adir, spec["slug"], "avatar")
+        bn = _art_file(adir, spec["slug"], "banner")
+        kw = {}
+        if av and not (ch.get("avatar") and os.path.isfile(ch.get("avatar"))):
+            kw["avatar"] = lib.copy_image_asset(av, "avatars", ch["id"]) or ""
+        if bn and not (ch.get("banner") and os.path.isfile(ch.get("banner"))):
+            kw["banner"] = lib.copy_image_asset(bn, "banners", ch["id"]) or ""
+        if kw:
+            lib.update_channel(ch["id"], **kw)
+        by_name[spec["name"]] = lib.get_channel(ch["id"])
+
+    def add_clip(spec, is_short):
+        ch = by_name.get(spec["channel"])
+        if not ch:
+            return None
+        if _has_seed_video(lib, spec["file"], spec.get("title"), ch["id"]):
+            return None
+        src = os.path.join(sdir, spec["file"])
+        if not os.path.isfile(src):
+            return None
+        thumb = ""
+        if spec.get("thumb"):
+            thumb = os.path.join(tdir, spec["thumb"])
+            if not os.path.isfile(thumb):
+                thumb = os.path.join(sdir, spec["thumb"])
+        uploaded = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now - 86400 * int(spec.get("days") or 1)))
+        return lib.import_video(
+            src, spec["title"], spec["description"], ch["id"],
+            thumb_src=thumb if thumb and os.path.isfile(thumb) else None,
+            uploaded=uploaded, views=spec.get("views") or 0, likes=spec.get("likes") or 0,
+            is_short=is_short, seed_file=spec["file"], category=spec.get("category") or "",
+        )
+
+    for spec in FEATURED_VIDEOS:
+        add_clip(spec, False)
+    if include_classic:
+        for spec in SAMPLE_VIDEOS:
+            add_clip(spec, False)
+        for spec in SAMPLE_SHORTS:
+            add_clip(spec, True)
+    lib.save()
+    return lib
 
 
 def seed_library(reset=True):
     """Build a demo library from the sample clips (for screenshots and first-run testing)."""
     lib = Library()
     if reset:
-        # wipe previous demo data files we own
         lib.data = lib._empty()
         lib.save()
-    sdir = samples_dir()
-    adir = channel_art_dir()
-    by_name = {}
-    now = time.time()
-    for spec in SAMPLE_CHANNELS:
-        av = os.path.join(adir, "%s_avatar.png" % spec["slug"])
-        bn = os.path.join(adir, "%s_banner.jpg" % spec["slug"])
-        ch = lib.add_channel(
-            spec["name"], spec["handle"], spec["description"],
-            owned=True, subscribers=spec["color_subs"],
-            created=time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now - 86400 * 80)),
-        )
-        av2 = lib.copy_image_asset(av, "avatars", ch["id"]) if os.path.isfile(av) else ""
-        bn2 = lib.copy_image_asset(bn, "banners", ch["id"]) if os.path.isfile(bn) else ""
-        lib.update_channel(ch["id"], avatar=av2, banner=bn2)
-        by_name[spec["name"]] = lib.get_channel(ch["id"])
-    # current = Northwind Labs
+    ensure_bundled_content(lib, include_classic=True)
+    by_name = {c.get("name"): c for c in lib.channels()}
     if "Northwind Labs" in by_name:
         lib.switch_channel(by_name["Northwind Labs"]["id"])
-
-    def add_clip(spec, is_short):
-        src = os.path.join(sdir, spec["file"])
-        if not os.path.isfile(src):
-            print("missing sample", src)
-            return None
-        ch = by_name[spec["channel"]]
-        uploaded = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now - 86400 * spec["days"]))
-        v = lib.import_video(src, spec["title"], spec["description"], ch["id"],
-                             uploaded=uploaded, views=spec["views"], likes=spec["likes"],
-                             is_short=is_short)
-        return v
-
-    for spec in SAMPLE_VIDEOS:
-        add_clip(spec, False)
-    shorts = []
-    for spec in SAMPLE_SHORTS:
-        v = add_clip(spec, True)
-        if v:
-            shorts.append(v)
-
-    # notscriptions + a few comments
-    for name in ("Night Market", "Blue Hour Films", "Atlas Walks"):
-        if name in by_name and not lib.is_notscribed(by_name[name]["id"]):
-            lib.toggle_notscribe(by_name[name]["id"])
-    # sample comments on the radio-waves video and a short
+    for name in ("Night Market", "Blue Hour Films", "Atlas Walks", "Mira Vale Fits", "Sable Wren Wardrobe"):
+        ch = by_name.get(name)
+        if ch and not lib.is_notscribed(ch["id"]):
+            lib.toggle_notscribe(ch["id"])
     for v in lib.videos():
         if v.get("title") == "How radio waves travel":
-            lib.add_comment(v["id"], "finally a clear explanation", author="Maple Row")
-            lib.add_comment(v["id"], "watching this again with a notebook", author="Jon East")
+            if not lib.data.get("comments", {}).get(v["id"]):
+                lib.add_comment(v["id"], "finally a clear explanation", author="Maple Row")
+                lib.add_comment(v["id"], "watching this again with a notebook", author="Jon East")
         if v.get("title") == "Hill sprint after rain":
-            lib.add_comment(v["id"], "that last push though", author="Cedar Grove")
+            if not lib.data.get("comments", {}).get(v["id"]):
+                lib.add_comment(v["id"], "that last push though", author="Cedar Grove")
         if v.get("title") == "Sunrise over the glass lake":
-            lib.add_comment(v["id"], "the colour on the water is perfect", author="Isla North")
+            if not lib.data.get("comments", {}).get(v["id"]):
+                lib.add_comment(v["id"], "the colour on the water is perfect", author="Isla North")
+        if v.get("title") == "Autumn trench + wide-leg jeans haul":
+            if not lib.data.get("comments", {}).get(v["id"]):
+                lib.add_comment(v["id"], "that trench looks so clean", author="Ivy North")
     lib.save()
     return lib
-
-
-def _grab(app, path, delay=0.4):
-    from PIL import ImageGrab
-    app.update_idletasks()
-    app.update()
-    time.sleep(delay)
-    app.update()
-    x, y = app.winfo_rootx(), app.winfo_rooty()
-    w, h = app.winfo_width(), app.winfo_height()
-    im = ImageGrab.grab(bbox=(x, y, x + w, y + h))
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    im.save(path)
-    return im
 
 
 def run_shots():
@@ -3677,7 +3910,7 @@ def run_shots():
             app.sidebar_open = True
             app._build_sidebar()
             app.update(); app.update()
-            save("ui_home_1.0.0.png", "shot0.jpg")
+            save("ui_home_1.0.3.png", "shot0.jpg")
             # watch a long video
             vids = app.lib.long_videos()
             radio = next((v for v in vids if "radio" in (v.get("title") or "").lower()), vids[0])
@@ -3688,10 +3921,10 @@ def run_shots():
             save("ui_watch_1.0.0.png", "shot1.jpg")
             app.player_pause()
             # channel page
-            ch = app.lib.get_channel_by_name("Night Market") or app.lib.current_channel()
+            ch = app.lib.get_channel_by_name("Mira Vale Fits") or app.lib.get_channel_by_name("Night Market") or app.lib.current_channel()
             app.open_channel(ch["id"])
             app.update(); time.sleep(0.4)
-            save("ui_channel_1.0.0.png")
+            save("ui_channel_1.0.3.png")
             # studio dashboard
             app.open_studio("dashboard")
             app.update(); time.sleep(0.3)

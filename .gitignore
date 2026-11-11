@@ -7,3 +7,9 @@ iss.log
 samples/
 shots/*.xwd
 .wine/
+
+assets/hauls/
+build_*.log
+pyi.log
+iss.log
+__pycache__/

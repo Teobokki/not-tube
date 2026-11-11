@@ -2,7 +2,7 @@
 from PyInstaller.utils.hooks import collect_all
 d, b, h = collect_all('imageio_ffmpeg')
 a = Analysis(['not_tube.py'],
-             datas=[('assets', 'assets')] + d,
+             datas=[('assets', 'assets'), ('samples', 'samples')] + d,
              binaries=b,
              hiddenimports=['PIL.ImageTk', 'PIL.ImageDraw', 'PIL.ImageFont', 'PIL.ImageGrab'] + h,
              excludes=['matplotlib', 'scipy', 'pandas', 'IPython', 'pytest', 'torch', 'cv2'],
