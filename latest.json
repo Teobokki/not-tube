@@ -1,14 +1,14 @@
 {
-  "version": "1.0.2",
-  "url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.2/NOT-TUBE-Setup-1.0.2.exe",
-  "installer_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.2/NOT-TUBE-Setup-1.0.2.exe",
-  "full_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.2/NOT-TUBE-1.0.2-Windows-x64.zip",
-  "portable_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.2/NOT-TUBE-1.0.2-Windows-x64.zip",
-  "release_url": "https://github.com/Teobokki/not-tube/releases/tag/v1.0.2",
-  "sha256": "67ac1b28d8b7a4faa42514cf83d46b5339b7317dbea736d1afbc5ff0000fa722",
-  "size": 45694519,
-  "portable_sha256": "b1e287666fe0bfc6c7779f4a496e531096259e9e260609dcd312930ffb39695a",
-  "portable_size": 65321683,
-  "published": "2026-11-10",
-  "notes": "NOT TUBE 1.0.2 — About popup reads ©HYPERION SYSTEMS."
+  "version": "1.0.3",
+  "url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.3/NOT-TUBE-Setup-1.0.3.exe",
+  "installer_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.3/NOT-TUBE-Setup-1.0.3.exe",
+  "full_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.3/NOT-TUBE-1.0.3-Windows-x64.zip",
+  "portable_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.3/NOT-TUBE-1.0.3-Windows-x64.zip",
+  "release_url": "https://github.com/Teobokki/not-tube/releases/tag/v1.0.3",
+  "sha256": "d0f9fab6b9c190e36b0e9bc4adbae51588a26978c0d9a90a8d64067845fa3390",
+  "size": 63059582,
+  "portable_sha256": "6205981ecd612844029499b74c04ac3bf7f61a34127b839151a464bc997f2996",
+  "portable_size": 83052687,
+  "published": "2026-11-11",
+  "notes": "NOT TUBE 1.0.3 — Featured channels and try-on haul videos on Home."
 }
