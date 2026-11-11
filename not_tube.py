@@ -10,7 +10,7 @@ from tkinter import ttk, filedialog, messagebox
 import tkinter.font as tkfont
 
 APP = "NOT TUBE"
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 COPYRIGHT = "\u00a92026 EX Inc./HYPERION DIGITAL \u00a92026"
 REPO = "Teobokki/not-tube"
 UPDATE_URL = "https://raw.githubusercontent.com/%s/main/latest.json" % REPO
@@ -30,7 +30,9 @@ SCRIM = "#1a1a1a"
 WHITE = "#ffffff"
 BLACK = "#0f0f0f"
 
-FPS = 24
+FPS = 24  # UI fallback only; videos play at their own frame rate
+MAX_PLAY_FPS = 60
+THUMB_REV = 2
 PLAY_W, PLAY_H = 960, 540
 NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 VID_EXT = (".mp4", ".mov", ".mkv", ".webm", ".avi")
@@ -132,23 +134,123 @@ def probe_duration(path):
     return 0.0
 
 
-def grab_thumb(src, dest, dur=0.0, vertical=False):
+def probe_video(path):
+    """Display size, frame rate and colour tags of the first real video stream
+    (attached cover pictures are ignored)."""
+    out = {"width": 0, "height": 0, "fps": 0.0, "matrix": "", "range": "", "rotate": 0, "sar": 1.0}
+    try:
+        proc = run_hidden([ffmpeg_exe(), "-hide_banner", "-i", path], timeout=20)
+        text = (proc.stderr or b"").decode("utf-8", "replace")
+    except Exception:
+        return out
+    lines = text.splitlines()
+    for i, ln in enumerate(lines):
+        if "Stream #" not in ln or "Video:" not in ln or "attached pic" in ln:
+            continue
+        body = ln.split("Video:", 1)[1]
+        m = re.search(r",\s*(\d{2,5})x(\d{2,5})", body)
+        if not m:
+            continue
+        w, h = int(m.group(1)), int(m.group(2))
+        sar = 1.0
+        ms = re.search(r"SAR (\d+):(\d+)", body)
+        if ms and int(ms.group(2)) and int(ms.group(1)):
+            sar = int(ms.group(1)) / float(int(ms.group(2)))
+        fps = 0.0
+        mf = re.search(r"([\d.]+)\s*fps", body)
+        if mf:
+            fps = float(mf.group(1))
+        else:
+            mf = re.search(r"([\d.]+)\s*tbr", body)
+            if mf:
+                fps = float(mf.group(1))
+        low = body.lower()
+        matrix = ""
+        if "bt709" in low:
+            matrix = "bt709"
+        elif "bt2020" in low:
+            matrix = "bt2020"
+        elif "smpte170m" in low or "bt470bg" in low or "bt601" in low:
+            matrix = "bt601"
+        rng = "pc" if ("yuvj" in low or "(pc" in low or ", pc" in low) else "tv"
+        rot = 0
+        for nxt in lines[i + 1:i + 12]:
+            if "Stream #" in nxt:
+                break
+            mr = re.search(r"rotation of (-?[\d.]+)", nxt) or re.search(r"rotate\s*:\s*(-?\d+)", nxt)
+            if mr:
+                rot = int(round(float(mr.group(1)))) % 360
+        dw = int(round(w * sar))
+        if rot in (90, 270):
+            dw, h = h, dw
+        out.update(width=dw, height=h, fps=fps, matrix=matrix, range=rng, rotate=rot, sar=sar)
+        break
+    return out
+
+
+def fit_inside(sw, sh, bw, bh, upscale=True):
+    """Largest even size with the source aspect that fits in bw x bh."""
+    if sw <= 0 or sh <= 0:
+        return max(2, bw - bw % 2), max(2, bh - bh % 2)
+    sc = min(bw / float(sw), bh / float(sh))
+    if not upscale:
+        sc = min(1.0, sc)
+    w = max(2, int(sw * sc + 0.5))
+    h = max(2, int(sh * sc + 0.5))
+    return w - (w % 2), h - (h % 2)
+
+
+def frame_filter(info, w, h):
+    """Exact-aspect scale to w x h with the stream's own colour matrix/range
+    (untagged HD is treated as BT.709, like every video player does)."""
+    mat = info.get("matrix") or ("bt709" if max(info.get("width") or 0, info.get("height") or 0) >= 1200 or (info.get("height") or 0) >= 700 else "bt601")
+    if mat == "bt2020":
+        mat = "bt2020"
+    rng = info.get("range") or "tv"
+    return ("scale=%d:%d:flags=lanczos+accurate_rnd+full_chroma_int:in_color_matrix=%s:in_range=%s:out_range=pc,setsar=1"
+            % (w, h, mat, rng))
+
+
+def grab_thumb(src, dest, dur=0.0, vertical=False, info=None):
+    """A real frame from the video at its own aspect ratio (no crop, no padding)."""
+    info = info or probe_video(src)
     t = max(0.05, (dur * 0.10) if dur and dur > 0.4 else 0.4)
-    if vertical:
-        vf = "scale=360:640:force_original_aspect_ratio=decrease,pad=360:640:(ow-iw)/2:(oh-ih)/2:black"
-    else:
-        vf = "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:black"
+    sw, sh = info.get("width") or 0, info.get("height") or 0
+    if sw <= 0 or sh <= 0:
+        sw, sh = (720, 1280) if vertical else (1280, 720)
+    bw, bh = (720, 1280) if sh > sw else (1280, 720)
+    w, h = fit_inside(sw, sh, bw, bh, upscale=False)
     cmd = [
         ffmpeg_exe(), "-y", "-hide_banner", "-loglevel", "error",
-        "-ss", "%.3f" % t, "-i", src, "-frames:v", "1",
-        "-vf", vf,
+        "-ss", "%.3f" % t, "-i", src, "-map", "0:V:0", "-frames:v", "1",
+        "-vf", frame_filter(info, w, h), "-q:v", "2",
         dest,
     ]
     try:
         p = run_hidden(cmd, timeout=30)
-        return p.returncode == 0 and os.path.isfile(dest) and os.path.getsize(dest) > 100
+        ok = p.returncode == 0 and os.path.isfile(dest) and os.path.getsize(dest) > 100
+        if not ok and t > 0.1:
+            cmd[cmd.index("-ss") + 1] = "0.000"
+            p = run_hidden(cmd, timeout=30)
+            ok = p.returncode == 0 and os.path.isfile(dest) and os.path.getsize(dest) > 100
+        return ok
     except Exception:
         return False
+
+
+def save_image_whole(src_path, dest, max_w=1280, max_h=1280):
+    """Save a picked thumbnail at its own aspect ratio (no crop)."""
+    im = Image.open(src_path)
+    try:
+        from PIL import ImageOps
+        im = ImageOps.exif_transpose(im)
+    except Exception:
+        pass
+    im = im.convert("RGB")
+    if im.width > max_w or im.height > max_h:
+        w, h = fit_inside(im.width, im.height, max_w, max_h, upscale=False)
+        im = im.resize((w, h), Image.Resampling.LANCZOS)
+    im.save(dest, "JPEG", quality=92)
 
 
 def probe_media(path):
@@ -417,6 +519,18 @@ def cover_fit(im, tw, th):
     return im.crop((x, y, x + tw, y + th))
 
 
+def contain_fit(im, tw, th, fill=(0, 0, 0)):
+    """Whole image inside tw x th at its own aspect ratio (bars, never crop/stretch)."""
+    im = im.convert("RGB")
+    if abs(im.width / float(im.height) - tw / float(th)) < 0.012:
+        return im.resize((tw, th), Image.Resampling.LANCZOS)
+    sc = min(tw / float(im.width), th / float(im.height))
+    nw, nh = max(1, int(round(im.width * sc))), max(1, int(round(im.height * sc)))
+    base = Image.new("RGB", (tw, th), fill)
+    base.paste(im.resize((nw, nh), Image.Resampling.LANCZOS), ((tw - nw) // 2, (th - nh) // 2))
+    return base
+
+
 def circle_avatar(im, size, border=None):
     im = cover_fit(im.convert("RGB"), size, size)
     mask = Image.new("L", (size, size), 0)
@@ -454,7 +568,7 @@ def initials_avatar(name, size, colors=None):
 def rounded_thumb(path, tw, th, radius=12, duration=None, bg=BG):
     try:
         im = Image.open(path).convert("RGB")
-        im = cover_fit(im, tw, th)
+        im = contain_fit(im, tw, th)
     except Exception:
         im = Image.new("RGB", (tw, th), (30, 30, 30))
     if duration is not None and duration >= 0:
@@ -835,6 +949,9 @@ class Library:
         dest = os.path.join(app_data_dir(), "videos", vid + ext)
         shutil.copy2(src, dest)
         info = probe_media(dest)
+        vinfo = probe_video(dest)
+        if vinfo.get("width") and vinfo.get("height"):
+            info["width"], info["height"] = vinfo["width"], vinfo["height"]
         dur = info["duration"] or probe_duration(dest)
         if is_short is None:
             is_short = looks_like_short(dest, info)
@@ -844,13 +961,12 @@ class Library:
         tw, th = (360, 640) if is_short else (640, 360)
         if thumb_src and os.path.isfile(thumb_src):
             try:
-                im = Image.open(thumb_src).convert("RGB")
-                cover_fit(im, tw, th).save(thumb, "JPEG", quality=90)
+                save_image_whole(thumb_src, thumb)
                 custom = True
             except Exception:
                 custom = False
         if not custom:
-            if not grab_thumb(dest, thumb, dur, vertical=is_short):
+            if not grab_thumb(dest, thumb, dur, vertical=is_short, info=vinfo):
                 Image.new("RGB", (tw, th), (30, 30, 30)).save(thumb, "JPEG")
         entry = {
             "id": vid,
@@ -871,6 +987,7 @@ class Library:
             "is_short": is_short,
             "boost": {"on": False, "intensity": "medium", "last_tick": time.time()},
             "category": (category or "").strip(),
+            "thumb_rev": THUMB_REV,
         }
         if seed_file:
             entry["seed_file"] = seed_file
@@ -891,8 +1008,7 @@ class Library:
                 v[k] = kw[k]
         if kw.get("thumb_src") and os.path.isfile(kw["thumb_src"]):
             try:
-                im = Image.open(kw["thumb_src"]).convert("RGB")
-                cover_fit(im, 640, 360).save(v["thumb"], "JPEG", quality=90)
+                save_image_whole(kw["thumb_src"], v["thumb"])
                 v["custom_thumb"] = True
             except Exception:
                 pass
@@ -1468,6 +1584,7 @@ class App(tk.Tk):
             ensure_bundled_content(self.lib)
         except Exception:
             pass
+        self.after(700, self._start_thumb_refresh)
         self.page = "home"
         self.sidebar_open = True
         self.chip = "All"
@@ -1502,6 +1619,12 @@ class App(tk.Tk):
         self._muted = False
         self._pipe_t0 = 0.0
         self._pipe_start = 0.0
+        self._play_info = {}
+        self._play_fps = float(FPS)
+        self._frame_q = None
+        self._frame_thread = None
+        self._frames_shown = 0
+        self._resize_job = None
         self._boost_job = None
         self._live_rate = 0
 
@@ -3453,6 +3576,8 @@ class App(tk.Tk):
             self.player_w, self.player_h = 405, 720
         else:
             self.player_w, self.player_h = PLAY_W, PLAY_H
+        self._play_info = probe_video(path)
+        self._play_fps = min(float(MAX_PLAY_FPS), float(self._play_info.get("fps") or 0) or float(FPS))
         self.player_playing = False
         self._player_show_still(0.0)
         self._update_player_time()
@@ -3534,6 +3659,7 @@ class App(tk.Tk):
         self._player_audio_stop()
         proc = self.player_proc
         self.player_proc = None
+        self._frame_q = None
         if proc is None:
             return
         try:
@@ -3550,52 +3676,156 @@ class App(tk.Tk):
         except Exception:
             pass
 
+    def _start_thumb_refresh(self):
+        try:
+            todo = thumbs_needing_refresh(self.lib)
+        except Exception:
+            todo = []
+        if not todo:
+            return
+        snap = [dict(v) for v in todo]
+
+        def work():
+            refresh_auto_thumbs(self.lib, snap)
+            try:
+                self.after(0, lambda: self._finish_thumb_refresh(snap))
+            except Exception:
+                pass
+        threading.Thread(target=work, daemon=True).start()
+
+    def _finish_thumb_refresh(self, snap):
+        for s_ in snap:
+            v = self.lib.get_video(s_["id"])
+            if v and s_.get("thumb_rev") == THUMB_REV:
+                v["thumb"] = s_.get("thumb") or v.get("thumb")
+                v["thumb_rev"] = THUMB_REV
+                if v.get("seed_id"):
+                    v["custom_thumb"] = False
+        try:
+            self.lib.save()
+        except Exception:
+            pass
+        try:
+            if self.page in ("home", "channel", "hauls") and not self.player_playing:
+                self.show_page(self.page)
+        except Exception:
+            pass
+
+    def _player_target_size(self):
+        """Decode size = the video's own aspect fitted to the on-screen player,
+        so Tk shows decoded pixels 1:1 (no second resample, no stretch)."""
+        info = self._play_info or {}
+        cv = getattr(self, "player_canvas", None)
+        try:
+            cw, ch = int(cv.winfo_width()), int(cv.winfo_height())
+        except Exception:
+            cw, ch = 0, 0
+        if cw < 40 or ch < 40:
+            cw, ch = self.player_w, self.player_h
+        sw, sh = info.get("width") or 0, info.get("height") or 0
+        if sw <= 0 or sh <= 0:
+            sw, sh = self.player_w, self.player_h
+        return fit_inside(sw, sh, cw, ch, upscale=True)
+
+    def _pipe_cmd(self, start_t, w, h, still=False):
+        cmd = [ffmpeg_exe(), "-hide_banner", "-loglevel", "error",
+               "-ss", "%.3f" % max(0.0, start_t), "-i", self.player_path,
+               "-map", "0:V:0"]
+        if still:
+            cmd += ["-frames:v", "1"]
+        vf = frame_filter(self._play_info or {}, w, h)
+        fps = self._play_fps
+        if not still and fps > MAX_PLAY_FPS:
+            vf += ",fps=%d" % MAX_PLAY_FPS
+        cmd += ["-f", "rawvideo", "-pix_fmt", "rgb24", "-vf", vf, "-an", "-sn", "-dn", "-"]
+        return cmd
+
     def _player_start_pipe(self, start_t):
         self._player_kill()
-        ff = ffmpeg_exe()
-        w, h = self.player_w, self.player_h
-        cmd = [
-            ff, "-hide_banner", "-loglevel", "error",
-            "-ss", "%.3f" % max(0.0, start_t),
-            "-i", self.player_path,
-            "-f", "rawvideo", "-pix_fmt", "rgb24",
-            "-vf", "scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:black" % (w, h, w, h),
-            "-an", "-sn", "-r", str(FPS), "-",
-        ]
-        self._player_audio_start(start_t)
+        w, h = self._player_target_size()
+        self.player_w, self.player_h = w, h
+        self._play_fps = min(float(MAX_PLAY_FPS), float((self._play_info or {}).get("fps") or 0) or float(FPS))
+        cmd = self._pipe_cmd(start_t, w, h)
         try:
+            import queue
             self.player_proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                bufsize=w * h * 3 * 2, creationflags=NO_WINDOW)
-            self._pipe_t0 = time.time()
+                bufsize=w * h * 3 * 4, creationflags=NO_WINDOW)
+            q = queue.Queue(maxsize=12)
+            self._frame_q = q
+            proc = self.player_proc
+            need = w * h * 3
+
+            def reader():
+                idx = 0
+                while True:
+                    try:
+                        buf = proc.stdout.read(need)
+                    except Exception:
+                        buf = b""
+                    item = None if (not buf or len(buf) < need) else (idx, buf)
+                    while True:
+                        try:
+                            q.put(item, timeout=0.5)
+                            break
+                        except queue.Full:
+                            if self.player_proc is not proc:
+                                return
+                    if item is None or self.player_proc is not proc:
+                        return
+                    idx += 1
+            self._frame_thread = threading.Thread(target=reader, daemon=True)
+            self._frame_thread.start()
             self._pipe_start = start_t
+            self._frames_shown = 0
+            self._pipe_t0 = None
         except Exception as e:
             self.player_proc = None
             messagebox.showerror(APP, "Could not start playback:\n%s" % e, parent=self)
             self.player_playing = False
+        self._player_audio_start(start_t)
 
     def _player_read_frame(self):
-        proc = self.player_proc
-        if not proc or not proc.stdout:
-            return None
-        need = self.player_w * self.player_h * 3
-        buf = b""
-        while len(buf) < need:
-            chunk = proc.stdout.read(need - len(buf))
-            if not chunk:
-                return None
-            buf += chunk
-        return Image.frombytes("RGB", (self.player_w, self.player_h), buf)
+        """Next frame due on the wall clock (never blocks the UI). Frames are only
+        skipped if the PC falls behind real time, to keep picture and sound in sync.
+        Returns (item, state): state "wait" = nothing decoded yet, "end" = finished."""
+        q = self._frame_q
+        if q is None:
+            return None, "end"
+        import queue
+        item = None
+        while True:
+            try:
+                nxt = q.get_nowait()
+            except queue.Empty:
+                return (item, "ok") if item is not None else (None, "wait")
+            if nxt is None:
+                if item is not None:
+                    try:
+                        q.put_nowait(None)
+                    except Exception:
+                        pass
+                    return item, "ok"
+                return None, "end"
+            item = nxt
+            if self._pipe_t0 is None:
+                return item, "ok"
+            due_idx = int((time.time() - self._pipe_t0) * self._play_fps)
+            if item[0] >= due_idx:
+                return item, "ok"
 
     def _player_tick(self):
         if not self.player_playing:
             return
-        im = self._player_read_frame()
-        if im is None:
+        item, state = self._player_read_frame()
+        if state == "wait":
+            self.player_job = self.after(4, self._player_tick)
+            return
+        if item is None:
             if self._player_loop and self.player_path:
                 self.player_t = 0.0
                 self._player_start_pipe(0.0)
-                self.player_job = self.after(int(1000 / FPS), self._player_tick)
+                self.player_job = self.after(10, self._player_tick)
                 return
             self.player_playing = False
             self.player_t = self.player_dur
@@ -3603,9 +3833,12 @@ class App(tk.Tk):
             self._player_kill()
             self._sync_play_btn()
             return
-        self.player_frame = im
-        elapsed = time.time() - self._pipe_t0
-        self.player_t = min(self.player_dur, self._pipe_start + elapsed)
+        idx, buf = item
+        if self._pipe_t0 is None:
+            self._pipe_t0 = time.time() - idx / self._play_fps
+        self.player_frame = Image.frombytes("RGB", (self.player_w, self.player_h), buf)
+        self._frames_shown += 1
+        self.player_t = min(self.player_dur or 1e9, self._pipe_start + idx / self._play_fps)
         if hasattr(self, "seek"):
             try:
                 if self.player_dur > 0 and not self.seek._drag:
@@ -3614,20 +3847,15 @@ class App(tk.Tk):
                 pass
         self._update_player_time()
         self._player_redraw()
-        self.player_job = self.after(int(1000 / FPS), self._player_tick)
+        next_due = self._pipe_t0 + (idx + 1) / self._play_fps
+        delay = int(max(1, (next_due - time.time()) * 1000))
+        self.player_job = self.after(delay, self._player_tick)
 
     def _player_show_still(self, t):
         if not self.player_path:
             return
-        ff = ffmpeg_exe()
-        w, h = self.player_w, self.player_h
-        cmd = [
-            ff, "-hide_banner", "-loglevel", "error",
-            "-ss", "%.3f" % max(0.0, t), "-i", self.player_path,
-            "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24",
-            "-vf", "scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:black" % (w, h, w, h),
-            "-",
-        ]
+        w, h = self._player_target_size()
+        cmd = self._pipe_cmd(t, w, h, still=True)
         try:
             p = subprocess.run(cmd, capture_output=True, timeout=20, creationflags=NO_WINDOW)
             need = w * h * 3
@@ -3649,11 +3877,32 @@ class App(tk.Tk):
         im = self.player_frame
         if im is None:
             return
-        scale = min(cw / im.width, ch / im.height)
-        nw, nh = max(1, int(im.width * scale)), max(1, int(im.height * scale))
-        shown = im.resize((nw, nh), Image.BILINEAR)
+        nw, nh = fit_inside(im.width, im.height, cw, ch, upscale=True)
+        if abs(nw - im.width) <= 2 and abs(nh - im.height) <= 2:
+            shown = im  # decoded at screen size: pixels shown 1:1
+        else:
+            shown = im.resize((nw, nh), Image.Resampling.LANCZOS)
+            self._schedule_player_resize()
         self._player_photo = ImageTk.PhotoImage(shown)
         cv.create_image(cw // 2, ch // 2, image=self._player_photo)
+
+    def _schedule_player_resize(self):
+        """Player area changed size: re-decode at the new size once it settles."""
+        if self._resize_job:
+            try:
+                self.after_cancel(self._resize_job)
+            except Exception:
+                pass
+
+        def go():
+            self._resize_job = None
+            if not self.player_path:
+                return
+            if self.player_playing:
+                self._player_start_pipe(self.player_t)
+            else:
+                self._player_show_still(self.player_t)
+        self._resize_job = self.after(250, go)
 
     def _update_player_time(self):
         lbl = getattr(self, "player_time_lbl", None)
@@ -4073,6 +4322,62 @@ def _is_bundled_featured_seed(lib, v):
     return False
 
 
+def _backup_thumb(path):
+    """Keep a copy of a thumbnail before it is replaced (thumbs/_backup_1.0.6)."""
+    try:
+        if path and os.path.isfile(path):
+            bdir = os.path.join(os.path.dirname(path), "_backup_1.0.6")
+            os.makedirs(bdir, exist_ok=True)
+            dst = os.path.join(bdir, os.path.basename(path))
+            if not os.path.isfile(dst):
+                shutil.copy2(path, dst)
+    except Exception:
+        pass
+
+
+def thumbs_needing_refresh(lib):
+    """Auto thumbnails made by older versions (letterboxed 640x360 grabs).
+    Custom thumbnails the user picked are never touched."""
+    todo = []
+    for v in lib.videos():
+        if int(v.get("thumb_rev") or 0) >= THUMB_REV:
+            continue
+        if v.get("custom_thumb") and not v.get("seed_id"):
+            continue
+        path = v.get("path") or ""
+        if path and os.path.isfile(path):
+            todo.append(v)
+    return todo
+
+
+def refresh_auto_thumbs(lib, videos=None):
+    """Regenerate auto thumbnails from the original video file, after backing up
+    the old image. The video files themselves are only read, never changed."""
+    done = 0
+    for v in (videos if videos is not None else thumbs_needing_refresh(lib)):
+        path = v.get("path") or ""
+        tpath = v.get("thumb") or os.path.join(app_data_dir(), "thumbs", v["id"] + ".jpg")
+        tmp = tpath + ".new.jpg"
+        try:
+            if grab_thumb(path, tmp, float(v.get("duration") or 0), vertical=bool(v.get("is_short"))):
+                _backup_thumb(tpath)
+                os.replace(tmp, tpath)
+                v["thumb"] = tpath
+                v["thumb_rev"] = THUMB_REV
+                if v.get("seed_id"):
+                    v["custom_thumb"] = False
+                done += 1
+        except Exception:
+            pass
+        finally:
+            try:
+                if os.path.isfile(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
+    return done
+
+
 def ensure_bundled_content(lib, include_classic=False):
     """Idempotently add featured (and optionally classic) bundled channels/videos.
     Replaces outdated bundled featured hauls by seed id. Never wipes user or
@@ -4156,7 +4461,8 @@ def ensure_bundled_content(lib, include_classic=False):
             try:
                 dest = existing.get("path") or os.path.join(app_data_dir(), "videos", existing["id"] + ".mp4")
                 os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
-                shutil.copy2(src, dest)
+                if not (os.path.isfile(dest) and os.path.getsize(dest) == os.path.getsize(src)):
+                    shutil.copy2(src, dest)
                 existing["path"] = dest
                 existing["title"] = spec["title"]
                 existing["description"] = spec["description"]
@@ -4164,16 +4470,16 @@ def ensure_bundled_content(lib, include_classic=False):
                 existing["seed_id"] = spec.get("seed_id") or ""
                 existing["category"] = spec.get("category") or ""
                 existing["is_short"] = bool(is_short)
-                info = probe_media(dest)
-                existing["duration"] = info.get("duration") or existing.get("duration") or 0
-                if thumb and os.path.isfile(thumb):
-                    try:
-                        im = Image.open(thumb).convert("RGB")
-                        tw, th = (360, 640) if is_short else (640, 360)
-                        cover_fit(im, tw, th).save(existing.get("thumb") or os.path.join(app_data_dir(), "thumbs", existing["id"] + ".jpg"), "JPEG", quality=90)
-                        existing["custom_thumb"] = True
-                    except Exception:
-                        pass
+                if not existing.get("duration"):
+                    info = probe_media(dest)
+                    existing["duration"] = info.get("duration") or 0
+                tpath = existing.get("thumb") or os.path.join(app_data_dir(), "thumbs", existing["id"] + ".jpg")
+                if int(existing.get("thumb_rev") or 0) < THUMB_REV or not os.path.isfile(tpath):
+                    _backup_thumb(tpath)
+                    if grab_thumb(dest, tpath, existing.get("duration") or 0, vertical=bool(is_short)):
+                        existing["thumb"] = tpath
+                        existing["custom_thumb"] = False
+                        existing["thumb_rev"] = THUMB_REV
                 lib.save()
             except Exception:
                 lib.delete_video(existing["id"])
@@ -4182,7 +4488,7 @@ def ensure_bundled_content(lib, include_classic=False):
             return existing
         return lib.import_video(
             src, spec["title"], spec["description"], ch["id"],
-            thumb_src=thumb if thumb and os.path.isfile(thumb) else None,
+            thumb_src=None,
             uploaded=uploaded, views=spec.get("views") or 0, likes=spec.get("likes") or 0,
             is_short=is_short, seed_file=spec["file"], category=spec.get("category") or "",
             seed_id=spec.get("seed_id") or "",
