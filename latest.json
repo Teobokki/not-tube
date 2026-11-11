@@ -1,14 +1,14 @@
 {
-  "version": "1.0.7",
-  "url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.7/NOT-TUBE-Setup-1.0.7.exe",
-  "installer_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.7/NOT-TUBE-Setup-1.0.7.exe",
-  "full_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.7/NOT-TUBE-1.0.7-Windows-x64.zip",
-  "portable_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.7/NOT-TUBE-1.0.7-Windows-x64.zip",
-  "release_url": "https://github.com/Teobokki/not-tube/releases/tag/v1.0.7",
-  "sha256": "591cb06837574d9bed538d618d34a5ef4859c68c60aca570464a79167a72e842",
-  "size": 66947385,
-  "portable_sha256": "3867ec6bd2d704883d5c0299da6fc0d00a12272b07ab1609b242d9440607bea6",
-  "portable_size": 86973595,
+  "version": "1.0.8",
+  "url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.8/NOT-TUBE-Setup-1.0.8.exe",
+  "installer_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.8/NOT-TUBE-Setup-1.0.8.exe",
+  "full_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.8/NOT-TUBE-1.0.8-Portable.exe",
+  "portable_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.8/NOT-TUBE-1.0.8-Portable.exe",
+  "release_url": "https://github.com/Teobokki/not-tube/releases/tag/v1.0.8",
+  "sha256": "3ef1f62dbe796d5551ed2bb47d7e53b8a88f4a6b083e02487a57eca12cde34df",
+  "size": 66956307,
+  "portable_sha256": "49813e6ad708b9e766c76cca661c6161c979b8408ad35f372c6bbff26f495424",
+  "portable_size": 86705522,
   "published": "2026-11-11",
-  "notes": "NOT TUBE 1.0.7 \u2014 Videos and thumbnails now show their real, unmodified frames."
+  "notes": "NOT TUBE 1.0.8 \u2014 Search bar fixed: clean box, clear button, smooth typing, better results."
 }
