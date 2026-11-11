@@ -1,4 +1,4 @@
-#define MyVer "1.0.3"
+#define MyVer "1.0.4"
 [Setup]
 AppId={{F7397060-9B24-49F6-AB06-1358C47FDB97}
 AppName=NOT TUBE

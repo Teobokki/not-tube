@@ -3,7 +3,7 @@
 set -e
 export PATH=/workspace/wine-portable/current/bin:$PATH WINEPREFIX=/workspace/exwifi/.wine WINEDEBUG=-all
 cd /workspace/not-tube
-V=1.0.3
+V=1.0.4
 rm -rf build "dist/NOT TUBE"
 wine 'C:\Python311\python.exe' -m PyInstaller --noconfirm "NOT TUBE.spec" > pyi.log 2>&1; echo PYI_DONE
 wine 'C:\InnoSetup\ISCC.exe' installer.iss > iss.log 2>&1; echo ISS_DONE
