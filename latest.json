@@ -1,13 +1,13 @@
 {
-  "version": "1.0.8",
-  "url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.8/NOT-TUBE-Setup-1.0.8.exe",
-  "installer_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.8/NOT-TUBE-Setup-1.0.8.exe",
-  "portable_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.8/NOT-TUBE-1.0.8-Portable.exe",
-  "release_url": "https://github.com/Teobokki/not-tube/releases/tag/v1.0.8",
-  "sha256": "3ef1f62dbe796d5551ed2bb47d7e53b8a88f4a6b083e02487a57eca12cde34df",
-  "size": 66956307,
-  "portable_sha256": "49813e6ad708b9e766c76cca661c6161c979b8408ad35f372c6bbff26f495424",
-  "portable_size": 86705522,
-  "published": "2026-11-11",
-  "notes": "NOT TUBE 1.0.8 \u2014 Search bar fixed: clean box, clear button, smooth typing, better results."
+  "version": "1.0.9",
+  "url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.9/NOT-TUBE-Setup-1.0.9.exe",
+  "installer_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.9/NOT-TUBE-Setup-1.0.9.exe",
+  "portable_url": "https://github.com/Teobokki/not-tube/releases/download/v1.0.9/NOT-TUBE-1.0.9-Portable.exe",
+  "release_url": "https://github.com/Teobokki/not-tube/releases/tag/v1.0.9",
+  "sha256": "ef0904247cf1c0115e0ac12778df16a93bf09fdf4b90269726926f977c182955",
+  "size": 67017667,
+  "portable_sha256": "a834e28ed7324d5985c1985eee02f22b03674b9dfe98dc117694ba1e2edbd1fb",
+  "portable_size": 86772821,
+  "published": "2026-11-12",
+  "notes": "NOT TUBE 1.0.9 \u2014 Meet Not AI: key moments, plain-language search, title & tag helper and transparent recommendations, all on this PC."
 }
