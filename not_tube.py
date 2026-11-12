@@ -10,7 +10,7 @@ from tkinter import ttk, filedialog, messagebox
 import tkinter.font as tkfont
 
 APP = "NOT TUBE"
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 COPYRIGHT = "\u00a92026 EX Inc./HYPERION DIGITAL \u00a92026"
 REPO = "Teobokki/not-tube"
 UPDATE_URL = "https://raw.githubusercontent.com/%s/main/latest.json" % REPO
@@ -68,6 +68,8 @@ if os.name == "nt":
         pass
 
 from PIL import Image, ImageDraw, ImageFont, ImageTk, ImageFilter, ImageOps
+import queue
+import not_ai
 
 
 def res_path(*n):
@@ -707,6 +709,26 @@ def _icon_im(kind, size=24, color="#ffffff"):
     elif kind == "person":
         d.ellipse((s * 0.32, m, s * 0.68, s * 0.50), outline=c, width=w)
         d.arc((m, s * 0.48, s - m, s + s * 0.4), 200, 340, fill=c, width=w)
+    elif kind == "notai":
+        # four-point spark + small dot (flat, no glow)
+        cx, cy, R, r_ = s * 0.44, s * 0.52, s * 0.36, s * 0.09
+        d.polygon([(cx, cy - R), (cx + r_, cy - r_), (cx + R, cy), (cx + r_, cy + r_),
+                   (cx, cy + R), (cx - r_, cy + r_), (cx - R, cy), (cx - r_, cy - r_)], fill=c)
+        d.ellipse((s * 0.74, s * 0.10, s * 0.90, s * 0.26), fill=c)
+    elif kind == "gear":
+        import math as _m
+        cx = cy = s / 2.0
+        for k in range(8):
+            a = k * _m.pi / 4
+            d.line((cx + _m.cos(a) * s * 0.22, cy + _m.sin(a) * s * 0.22,
+                    cx + _m.cos(a) * s * 0.40, cy + _m.sin(a) * s * 0.40), fill=c, width=w + 1)
+        d.ellipse((cx - s * 0.27, cy - s * 0.27, cx + s * 0.27, cy + s * 0.27), outline=c, width=w)
+        d.ellipse((cx - s * 0.09, cy - s * 0.09, cx + s * 0.09, cy + s * 0.09), fill=c)
+    elif kind == "close":
+        d.line((m * 1.4, m * 1.4, s - m * 1.4, s - m * 1.4), fill=c, width=w)
+        d.line((m * 1.4, s - m * 1.4, s - m * 1.4, m * 1.4), fill=c, width=w)
+    elif kind == "send":
+        d.polygon([(m, m * 1.1), (s - m * 0.8, s * 0.5), (m, s - m * 1.1), (m + s * 0.12, s * 0.5)], fill=c)
     else:
         d.ellipse((m, m, s - m, s - m), outline=c, width=w)
     _ICON_CACHE[key] = im
@@ -938,7 +960,7 @@ class Library:
 
     def import_video(self, src, title, description, channel_id, thumb_src=None, uploaded=None,
                      views=0, likes=0, is_short=None, seed_file=None, category="",
-                     seed_id="", owner_added=False):
+                     seed_id="", owner_added=False, tags=None):
         if not src or not os.path.isfile(src):
             raise FileNotFoundError(src)
         ch = self.get_channel(channel_id)
@@ -948,6 +970,15 @@ class Library:
         ext = os.path.splitext(src)[1].lower() or ".mp4"
         dest = os.path.join(app_data_dir(), "videos", vid + ext)
         shutil.copy2(src, dest)
+        # captions next to the source file (same name .srt/.vtt) come along for Not AI
+        for cext in (".srt", ".vtt"):
+            for cand in (os.path.splitext(src)[0] + cext, src + cext):
+                if os.path.isfile(cand):
+                    try:
+                        shutil.copy2(cand, os.path.join(app_data_dir(), "videos", vid + cext))
+                    except Exception:
+                        pass
+                    break
         info = probe_media(dest)
         vinfo = probe_video(dest)
         if vinfo.get("width") and vinfo.get("height"):
@@ -988,6 +1019,7 @@ class Library:
             "boost": {"on": False, "intensity": "medium", "last_tick": time.time()},
             "category": (category or "").strip(),
             "thumb_rev": THUMB_REV,
+            "tags": [t.strip() for t in (tags or []) if t and t.strip()][:20],
         }
         if seed_file:
             entry["seed_file"] = seed_file
@@ -1006,6 +1038,8 @@ class Library:
         for k in ("title", "description"):
             if k in kw and kw[k] is not None:
                 v[k] = kw[k]
+        if kw.get("tags") is not None:
+            v["tags"] = [t.strip() for t in kw["tags"] if t and t.strip()][:20]
         if kw.get("thumb_src") and os.path.isfile(kw["thumb_src"]):
             try:
                 save_image_whole(kw["thumb_src"], v["thumb"])
@@ -1113,7 +1147,7 @@ class Library:
         for i, v in enumerate(self.videos()):
             ch = self.get_channel(v.get("channel_id")) or {}
             title_t = self._norm_text(v.get("title"))
-            words = title_t + self._norm_text(v.get("description")) + \
+            words = title_t + self._norm_text(v.get("description")) + self._norm_text(" ".join(v.get("tags") or [])) + \
                 self._norm_text(ch.get("name")) + self._norm_text(ch.get("handle"))
             blob = " ".join(words)
             flat = blob.replace(" ", "")
@@ -1569,7 +1603,819 @@ class NavRow(tk.Frame):
 
 
 # -------------------- application --------------------
-class App(tk.Tk):
+# -------------------- Not AI (built-in assistant) --------------------
+AI_ACCENT = "#3ea6ff"
+AI_W = 384
+AI_REV = 1
+
+
+class NotAIMixin:
+    """Not AI side panel. All answers come from local data (see not_ai.py)."""
+
+    # ---------- settings (optional own endpoint; off by default) ----------
+    def _ai_cfg_path(self):
+        return os.path.join(app_data_dir(), "not_ai_settings.json")
+
+    def ai_cfg(self):
+        d = {"enabled": False, "endpoint": "", "api_key": "", "model": ""}
+        try:
+            with open(self._ai_cfg_path(), "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if isinstance(raw, dict):
+                d.update({k: raw[k] for k in d if k in raw})
+        except Exception:
+            pass
+        return d
+
+    def ai_save_cfg(self, d):
+        tmp = self._ai_cfg_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=1)
+        os.replace(tmp, self._ai_cfg_path())
+
+    # ---------- header button ----------
+    def _ai_btn_paint(self, hover):
+        b = getattr(self, "btn_notai", None)
+        if not b:
+            return
+        on = getattr(self, "ai_open", False)
+        fill = HOVER if hover else ("#1d3a5c" if on else CARD)
+        font = get_pil_font(13)
+        txt = "Not AI"
+        tmp = ImageDraw.Draw(Image.new("RGB", (4, 4)))
+        bb = tmp.textbbox((0, 0), txt, font=font)
+        tw = bb[2] - bb[0]
+        w, h = 16 + 16 + 6 + tw + 14, 34
+        ss = 3
+        im = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
+        ImageDraw.Draw(im).rounded_rectangle((0, 0, w * ss - 1, h * ss - 1), h * ss // 2, fill=hex_rgb(fill))
+        im = im.resize((w, h), Image.Resampling.LANCZOS)
+        ic = _icon_im("notai", 16, AI_ACCENT if on else TXT)
+        im.paste(ic, (14, (h - 16) // 2), ic)
+        d = ImageDraw.Draw(im)
+        d.text((14 + 16 + 6 - bb[0], (h - (bb[3] - bb[1])) // 2 - bb[1]), txt, font=font, fill=hex_rgb(TXT))
+        ph = ImageTk.PhotoImage(im)
+        self._photos["btn_notai"] = ph
+        b.configure(image=ph, text="", compound="center", padx=0, pady=0, bd=0, bg=BAR)
+
+    # ---------- panel ----------
+    def ai_toggle(self, force=None):
+        want = (not getattr(self, "ai_open", False)) if force is None else bool(force)
+        if want:
+            if not getattr(self, "ai_panel", None) or not self.ai_panel.winfo_exists():
+                self._ai_build_panel()
+            if not self.ai_panel.winfo_ismapped():
+                self.ai_panel.pack(side="right", fill="y", before=self.right)
+            self.ai_open = True
+            wr = getattr(self, "_watch_right", None)
+            if wr is not None and self.page == "watch":
+                try:
+                    wr.pack_forget()
+                except Exception:
+                    pass
+            if not getattr(self, "_ai_greeted", False):
+                self._ai_greeted = True
+                self._ai_say(
+                    "Hi, I'm Not AI. I run on this PC and only use your NOT TUBE library: titles, "
+                    "descriptions, tags, channel names, captions and the video frames.\n\n"
+                    "Ask me to find videos, recommend something, summarize the video you're "
+                    "watching, or help title and tag an upload.")
+            self._ai_context_changed()
+            try:
+                self._ai_entry.focus_set()
+            except Exception:
+                pass
+        else:
+            self.ai_open = False
+            if getattr(self, "ai_panel", None):
+                self.ai_panel.pack_forget()
+            wr = getattr(self, "_watch_right", None)
+            if wr is not None and self.page == "watch":
+                try:
+                    if wr.winfo_exists() and not wr.winfo_ismapped():
+                        wr.pack(side="right", fill="y", padx=(0, 16), pady=12)
+                except Exception:
+                    pass
+        self._ai_btn_paint(False)
+        self.after(60, self._layout_player)
+
+    def _ai_build_panel(self):
+        self._ai_q = queue.Queue()
+        self._ai_photos = []
+        p = tk.Frame(self.body, bg=BG, width=AI_W)
+        p.pack_propagate(False)
+        self.ai_panel = p
+        tk.Frame(p, bg=BORDER, width=1).pack(side="left", fill="y")
+        col = tk.Frame(p, bg=BG)
+        col.pack(side="left", fill="both", expand=True)
+        head = tk.Frame(col, bg=BG)
+        head.pack(fill="x", padx=12, pady=(10, 4))
+        self._photos["ai_head"] = icon_photo("notai", 22, AI_ACCENT)
+        tk.Label(head, image=self._photos["ai_head"], bg=BG).pack(side="left")
+        tt = tk.Frame(head, bg=BG)
+        tt.pack(side="left", padx=8)
+        tk.Label(tt, text="Not AI", bg=BG, fg=TXT, font=(FONT_UI, 14, "bold"), anchor="w").pack(anchor="w")
+        self._ai_sub = tk.Label(tt, text="Runs on this PC · uses your library only", bg=BG, fg=MUT,
+                                font=(FONT_UI, 9), anchor="w")
+        self._ai_sub.pack(anchor="w")
+        IconBtn(head, "close", lambda: self.ai_toggle(False), size=18, bg=BG, hover=CARD, pad=6).pack(side="right")
+        IconBtn(head, "gear", self._ai_settings, size=18, bg=BG, hover=CARD, pad=6).pack(side="right", padx=(0, 6))
+        self._ai_chips = tk.Frame(col, bg=BG)
+        self._ai_chips.pack(fill="x", padx=10, pady=(4, 6))
+        tk.Frame(col, bg=BORDER, height=1).pack(fill="x")
+        # input at the bottom
+        bot = tk.Frame(col, bg=BG)
+        bot.pack(side="bottom", fill="x", padx=10, pady=10)
+        box = tk.Frame(bot, bg=SEARCH_BG, highlightthickness=1, highlightbackground=BORDER, highlightcolor="#1c62b9")
+        box.pack(fill="x")
+        self._ai_var = tk.StringVar()
+        ent = tk.Entry(box, textvariable=self._ai_var, bg=SEARCH_BG, fg=TXT, insertbackground=TXT, relief="flat",
+                       bd=0, font=(FONT_UI, 11), highlightthickness=0)
+        ent.pack(side="left", fill="x", expand=True, padx=(10, 4), ipady=7)
+        self._ai_entry = ent
+        self._ai_hint = tk.Label(box, text="Ask Not AI…", bg=SEARCH_BG, fg="#888888", font=(FONT_UI, 11),
+                                 anchor="w", cursor="xterm")
+        self._ai_hint.place(x=11, rely=0.5, anchor="w")
+        self._ai_hint.bind("<Button-1>", lambda e: ent.focus_set())
+        self._ai_var.trace_add("write", lambda *a: self._ai_hint_update())
+        ent.bind("<FocusIn>", lambda e: self._ai_hint_update())
+        ent.bind("<FocusOut>", lambda e: self._ai_hint_update())
+        ent.bind("<Return>", lambda e: (self.ai_ask(), "break")[1])
+        ent.bind("<Escape>", lambda e: (self.focus_set(), "break")[1])
+        self._photos["ai_send"] = icon_photo("send", 18, TXT)
+        snd = tk.Label(box, image=self._photos["ai_send"], bg=SEARCH_BG, cursor="hand2", padx=8)
+        snd.pack(side="right")
+        snd.bind("<Button-1>", lambda e: self.ai_ask())
+        tk.Label(bot, text="Answers come from your library on this PC. Nothing is uploaded.",
+                 bg=BG, fg=DIM, font=(FONT_UI, 8), anchor="w").pack(fill="x", pady=(4, 0))
+        self._ai_scroll = VScroll(col, bg=BG)
+        self._ai_scroll.pack(fill="both", expand=True)
+        self.after(150, self._ai_poll)
+
+    def _ai_hint_update(self):
+        try:
+            if self._ai_var.get() or self.focus_get() is self._ai_entry:
+                self._ai_hint.place_forget()
+            else:
+                self._ai_hint.place(x=11, rely=0.5, anchor="w")
+        except Exception:
+            pass
+
+    def _ai_context_changed(self):
+        if not getattr(self, "ai_panel", None) or not getattr(self, "ai_open", False):
+            return
+        wr = getattr(self, "_watch_right", None)
+        if self.page == "watch" and wr is not None:
+            try:
+                if wr.winfo_exists() and wr.winfo_ismapped():
+                    wr.pack_forget()
+            except Exception:
+                pass
+        for w in self._ai_chips.winfo_children():
+            w.destroy()
+        if self.page in ("watch", "shorts"):
+            chips = [("Summarize & key moments", lambda: self.ai_ask("Summarize this video with key moments")),
+                     ("More like this", lambda: self.ai_ask("More like this")),
+                     ("Recommend something", lambda: self.ai_ask("Recommend something for me"))]
+        elif self.page == "studio":
+            chips = [("Title & tags for my upload", lambda: self.ai_ask("Suggest a title and tags for my upload")),
+                     ("How do you work?", lambda: self.ai_ask("How do you work?"))]
+        else:
+            chips = [("Recommend something", lambda: self.ai_ask("Recommend something for me")),
+                     ("What's new?", lambda: self.ai_ask("Show me the newest videos")),
+                     ("Quick one, under 3 min", lambda: self.ai_ask("Something quick under 3 minutes")),
+                     ("How do you work?", lambda: self.ai_ask("How do you work?"))]
+        row = None
+        used = 0
+        for text, cmd in chips:
+            wpx = tkfont.Font(font=(FONT_UI, 9)).measure(text) + 30
+            if row is None or used + wpx > AI_W - 30:
+                row = tk.Frame(self._ai_chips, bg=BG)
+                row.pack(fill="x", pady=2)
+                used = 0
+            Pill(row, text, cmd=cmd, fill=CARD, fg=TXT, hover=HOVER, radius=14, padx=10, pady=4,
+                 font=(FONT_UI, 9)).pack(side="left", padx=2)
+            used += wpx
+
+    def _ai_poll(self):
+        try:
+            while True:
+                kind, key, res = self._ai_q.get_nowait()
+                try:
+                    if kind == "summary":
+                        self._ai_render_summary(key, res)
+                    elif kind == "llm":
+                        self._ai_render_llm(key, res)
+                except Exception as e:
+                    self._ai_say("Something went wrong showing that: %s" % e)
+        except queue.Empty:
+            pass
+        if getattr(self, "ai_panel", None) and self.ai_panel.winfo_exists():
+            self.after(150, self._ai_poll)
+
+    # ---------- message widgets ----------
+    def _ai_msg(self):
+        fr = tk.Frame(self._ai_scroll.inner, bg=BG)
+        fr.pack(fill="x", padx=12, pady=6)
+        return fr
+
+    def _ai_end(self):
+        def go():
+            try:
+                self._ai_scroll.canvas.update_idletasks()
+                self._ai_scroll._inner()
+                self._ai_scroll.canvas.yview_moveto(1.0)
+            except Exception:
+                pass
+        self.after_idle(go)
+        self.after(120, go)
+
+    def _ai_user(self, text):
+        fr = self._ai_msg()
+        tk.Label(fr, text=text, bg=CARD, fg=TXT, font=(FONT_UI, 10), wraplength=260, justify="left",
+                 padx=12, pady=7).pack(side="right")
+        self._ai_end()
+
+    def _ai_head(self, fr):
+        h = tk.Frame(fr, bg=BG)
+        h.pack(fill="x")
+        if "ai_small" not in self._photos:
+            self._photos["ai_small"] = icon_photo("notai", 14, AI_ACCENT)
+        tk.Label(h, image=self._photos["ai_small"], bg=BG).pack(side="left")
+        tk.Label(h, text=" Not AI", bg=BG, fg=MUT, font=(FONT_UI, 9, "bold")).pack(side="left")
+
+    def _ai_text(self, fr, text, fg=TXT, size=10, bold=False, pady=(2, 0)):
+        lab = tk.Label(fr, text=text, bg=BG, fg=fg, font=(FONT_UI, size, "bold") if bold else (FONT_UI, size),
+                       wraplength=AI_W - 44, justify="left", anchor="w")
+        lab.pack(fill="x", pady=pady)
+        return lab
+
+    def _ai_say(self, text, note=None):
+        fr = self._ai_msg()
+        self._ai_head(fr)
+        self._ai_text(fr, text)
+        if note:
+            self._ai_text(fr, note, fg=DIM, size=8, pady=(6, 0))
+        self._ai_end()
+        return fr
+
+    def _ai_hoverable(self, row, widgets, cmd):
+        def paint(on):
+            c = CARD if on else BG
+            for w in [row] + widgets:
+                try:
+                    w.configure(bg=c)
+                except Exception:
+                    pass
+        for w in [row] + widgets:
+            w.bind("<Enter>", lambda e: paint(True))
+            w.bind("<Leave>", lambda e: paint(False))
+            w.bind("<Button-1>", lambda e: cmd())
+            try:
+                w.configure(cursor="hand2")
+            except Exception:
+                pass
+
+    def _ai_video_row(self, parent, v, why):
+        ch = self.lib.get_channel(v.get("channel_id")) or {}
+        row = tk.Frame(parent, bg=BG)
+        row.pack(fill="x", pady=3)
+        try:
+            ph = ImageTk.PhotoImage(rounded_thumb(v.get("thumb") or "", 112, 63, radius=8,
+                                                  duration=v.get("duration") or 0))
+        except Exception:
+            ph = ImageTk.PhotoImage(Image.new("RGB", (112, 63), (30, 30, 30)))
+        self._ai_photos.append(ph)
+        th = tk.Label(row, image=ph, bg=BG, bd=0)
+        th.pack(side="left", anchor="n", padx=(0, 8), pady=2)
+        col = tk.Frame(row, bg=BG)
+        col.pack(side="left", fill="x", expand=True)
+        t = tk.Label(col, text=v.get("title") or "Untitled", bg=BG, fg=TXT, font=(FONT_UI, 10, "bold"),
+                     wraplength=AI_W - 180, justify="left", anchor="w")
+        t.pack(fill="x")
+        meta = "%s%s" % (ch.get("name") or "", "  ·  NOT SHORT" if v.get("is_short") else "")
+        m = tk.Label(col, text=meta, bg=BG, fg=MUT, font=(FONT_UI, 9), anchor="w", wraplength=AI_W - 180,
+                     justify="left")
+        m.pack(fill="x")
+        ws = []
+        if why:
+            wl = tk.Label(col, text="Why: " + "; ".join(why), bg=BG, fg="#8fb8de", font=(FONT_UI, 8),
+                          anchor="w", wraplength=AI_W - 180, justify="left")
+            wl.pack(fill="x", pady=(1, 0))
+            ws.append(wl)
+        self._ai_hoverable(row, [th, col, t, m] + ws, lambda vid=v["id"]: self.open_watch(vid))
+
+    def _ai_chapter_row(self, parent, vid, ch):
+        row = tk.Frame(parent, bg=BG)
+        row.pack(fill="x", pady=2)
+        try:
+            ph = ImageTk.PhotoImage(rounded_thumb(ch.get("thumb") or "", 96, 54, radius=6))
+        except Exception:
+            ph = ImageTk.PhotoImage(Image.new("RGB", (96, 54), (30, 30, 30)))
+        self._ai_photos.append(ph)
+        th = tk.Label(row, image=ph, bg=BG, bd=0)
+        th.pack(side="left", padx=(0, 8), pady=2)
+        col = tk.Frame(row, bg=BG)
+        col.pack(side="left", fill="x", expand=True)
+        top = tk.Frame(col, bg=BG)
+        top.pack(fill="x")
+        ts = tk.Label(top, text=not_ai.fmt_t(ch["t"]), bg=BG, fg=AI_ACCENT, font=(FONT_UI, 10, "bold"))
+        ts.pack(side="left")
+        lab = tk.Label(top, text="  " + (ch.get("label") or ""), bg=BG, fg=TXT, font=(FONT_UI, 10),
+                       anchor="w", wraplength=AI_W - 200, justify="left")
+        lab.pack(side="left", fill="x")
+        sub = "%s – %s" % (not_ai.fmt_t(ch["t"]), not_ai.fmt_t(ch.get("end") or ch["t"]))
+        if ch.get("look"):
+            sub += "  ·  " + ch["look"]
+        sl = tk.Label(col, text=sub, bg=BG, fg=MUT, font=(FONT_UI, 8), anchor="w")
+        sl.pack(fill="x")
+        self._ai_hoverable(row, [th, col, top, ts, lab, sl], lambda t=ch["t"]: self.ai_seek(vid, t))
+
+    def ai_seek(self, vid, t, _tries=0):
+        if self.page == "watch" and self.watch_id == vid and getattr(self, "player_path", "") and self.player_dur > 0:
+            t = max(0.0, min(float(t), max(0.0, self.player_dur - 0.1)))
+            self.player_t = t
+            self.player_pause()
+            self._player_show_still(t)
+            try:
+                self.seek.set(t / self.player_dur)
+            except Exception:
+                pass
+            self._update_player_time()
+            self.player_play()
+            return
+        if _tries == 0:
+            self.open_watch(vid)
+        if _tries < 6:
+            self.after(400, lambda: self.ai_seek(vid, t, _tries + 1))
+
+    # ---------- routing ----------
+    def ai_ask(self, text=None):
+        if not getattr(self, "ai_open", False):
+            self.ai_toggle(True)
+        if text is None:
+            text = (self._ai_var.get() or "").strip()
+            self._ai_var.set("")
+        text = (text or "").strip()
+        if not text:
+            return
+        self._ai_user(text)
+        intent = not_ai.intent_of(text, self.page)
+        try:
+            if intent == "summary":
+                self.ai_summary(self._ai_current_video(text))
+            elif intent == "helper":
+                self.ai_helper()
+            elif intent == "discover":
+                self.ai_discover(text)
+            elif intent == "similar":
+                self.ai_similar()
+            elif intent == "about":
+                self.ai_about()
+            else:
+                self.ai_search(text)
+        except Exception as e:
+            self._ai_say("Sorry, that didn't work: %s" % e)
+
+    def _ai_current_video(self, text=""):
+        if self.page == "watch" and self.watch_id:
+            return self.watch_id
+        if self.page == "shorts" and getattr(self, "shorts_id", None):
+            return self.shorts_id
+        f = not_ai.parse_request(text, self.lib.channels())
+        f["terms"] = [t for t in f["terms"] if not re.match(r"summar|chapter|moment|timestamp|takeaway", t)]
+        if f["terms"]:
+            res = not_ai.rank(self._ai_index(), f, limit=1)
+            if res:
+                return res[0][0]["id"]
+        return None
+
+    def ai_about(self):
+        cfg = self.ai_cfg()
+        self._ai_say(
+            "How I work, honestly:\n"
+            "• Search and recommendations rank your library by the words in titles, tags, channel names, "
+            "descriptions and captions (BM25 ranking plus a small related-words list). Filters like "
+            "\u201cunder 5 minutes\u201d, \u201cnewest\u201d or a channel name are read straight from your sentence.\n"
+            "• Key moments come from creator chapters in the description if there are any, otherwise from "
+            "scene changes measured in the video frames, otherwise from evenly spaced segments.\n"
+            "• Takeaways are the most informative sentences from the description and captions (.srt / .vtt "
+            "next to the video, or a subtitle track inside it).\n"
+            "• Titles and tags are built from your filename, description and the tags used in your library.\n\n"
+            "I can't hear speech or recognise what's on screen, and I don't make things up to fill gaps.",
+            note=("Your own AI endpoint is ON (%s)." % cfg.get("endpoint")) if cfg.get("enabled") and cfg.get("endpoint")
+            else "Optional: you can add your own AI endpoint in settings (gear). It's off, and everything works without it.")
+
+    def _ai_index(self):
+        return not_ai.Index(self.lib.videos(), self.lib.channels(),
+                            captions_for=lambda v: " ".join(c[2] for c in self._ai_captions(v, allow_extract=False)))
+
+    def _ai_signals(self):
+        hist = [h.get("id") if isinstance(h, dict) else h for h in (self.lib.data.get("history") or [])]
+        liked = [v["id"] for v in self.lib.liked_videos()]
+        nots = set(self.lib.data.get("subscriptions") or [])
+        return hist, liked, nots
+
+    # ---------- 2) conversational search ----------
+    def ai_search(self, text):
+        f = not_ai.parse_request(text, self.lib.channels())
+        hist, liked, nots = self._ai_signals()
+        res = not_ai.rank(self._ai_index(), f, hist, liked, limit=8)
+        fr = self._ai_msg()
+        self._ai_head(fr)
+        if not f["terms"] and not f["channel"] and not any((f["recent"], f["popular"], f["shorts"], f["min_dur"],
+                                                            f["max_dur"], f["unwatched"], f["liked"])):
+            self._ai_text(fr, "Tell me what you're looking for, e.g. \u201cleather jacket hauls under 1 minute\u201d, "
+                              "\u201cnewest from Atlas Walks\u201d or \u201csomething calm I haven't seen\u201d.")
+            self._ai_end()
+            return
+        what = " ".join(f.get("words") or f["terms"])
+        if res:
+            self._ai_text(fr, ("Found %d in your library for \u201c%s\u201d:" % (len(res), what)) if what
+                          else "Found %d in your library:" % len(res))
+        else:
+            self._ai_text(fr, "Nothing in your library matches \u201c%s\u201d%s. Try fewer words or another creator." %
+                          (what or "that", (" with " + ", ".join(f["notes"])) if f["notes"] else ""))
+        if f["notes"]:
+            self._ai_text(fr, "Filters I read from your message: " + ", ".join(f["notes"]), fg=MUT, size=9)
+        for v, _s, why in res:
+            self._ai_video_row(fr, v, why)
+        self._ai_text(fr, "Ranked by word matches in titles, tags, channel names, descriptions and captions, "
+                          "plus a small list of related words. Click a video to open it.", fg=DIM, size=8, pady=(6, 0))
+        self._ai_end()
+
+    # ---------- 4) transparent discovery ----------
+    def ai_discover(self, text):
+        f = not_ai.parse_request(text, self.lib.channels())
+        f["terms"] = [t for t in f["terms"] if t not in ("recommend", "suggest", "surprise", "bored", "good", "fun",
+                                                        "tonight", "mood", "pick")]
+        hist, liked, nots = self._ai_signals()
+        res = not_ai.recommend(self._ai_index(), f, hist, liked, nots, limit=6)
+        fr = self._ai_msg()
+        self._ai_head(fr)
+        if f["terms"]:
+            self._ai_text(fr, "For \u201c%s\u201d, here's what I'd pick from your library:" %
+                          " ".join(w for w in (f.get("words") or f["terms"]) if not_ai.stem(w) in f["terms"]))
+        else:
+            self._ai_text(fr, "Here's what I'd pick right now. Tell me a mood or topic to steer it, "
+                              "e.g. \u201csomething calm\u201d or \u201cdate night outfits\u201d.")
+        if f["notes"]:
+            self._ai_text(fr, "Filters: " + ", ".join(f["notes"]), fg=MUT, size=9)
+        if not res:
+            self._ai_text(fr, "I couldn't find anything that fits. Try other words.", fg=MUT)
+        for v, _s, why in res:
+            self._ai_video_row(fr, v, why)
+        self._ai_text(fr, "No hidden algorithm: each pick lists the exact signals used (your words, your watch "
+                          "history, channels you NOTSCRIBE to, upload date). No paid placement; nothing leaves this PC.",
+                      fg=DIM, size=8, pady=(6, 0))
+        self._ai_end()
+
+    def ai_similar(self):
+        vid = self._ai_current_video()
+        if not vid:
+            self._ai_say("Open a video first and I'll find more like it.")
+            return
+        idx = self._ai_index()
+        pos = next((i for i, v in enumerate(idx.videos) if v["id"] == vid), None)
+        if pos is None:
+            self._ai_say("I couldn't find that video in the library.")
+            return
+        kws = idx.keywords(pos, 6)
+        f = not_ai.parse_request("", self.lib.channels())
+        f["terms"] = kws
+        hist, liked, nots = self._ai_signals()
+        res = [r for r in not_ai.rank(idx, f, hist, liked, limit=9) if r[0]["id"] != vid][:6]
+        fr = self._ai_msg()
+        self._ai_head(fr)
+        self._ai_text(fr, "More like \u201c%s\u201d, matched on its keywords: %s" %
+                      (idx.videos[pos].get("title"), ", ".join(idx.surface(k) for k in kws) or "(none)"))
+        if not res:
+            self._ai_text(fr, "Nothing else in your library shares those words.", fg=MUT)
+        for v, _s, why in res:
+            self._ai_video_row(fr, v, why)
+        self._ai_end()
+
+    # ---------- 1) summaries & key moments ----------
+    def _ai_dir(self, vid):
+        d = os.path.join(app_data_dir(), "notai", vid)
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def _ai_captions(self, v, allow_extract=True):
+        path = v.get("path") or ""
+        if not path:
+            return []
+        for ext in (".srt", ".vtt"):
+            for cand in (os.path.splitext(path)[0] + ext, path + ext):
+                if os.path.isfile(cand):
+                    try:
+                        with open(cand, "r", encoding="utf-8-sig", errors="replace") as f:
+                            return not_ai.parse_captions(f.read())
+                    except Exception:
+                        pass
+        d = os.path.join(app_data_dir(), "notai", v.get("id") or "x")
+        emb, none = os.path.join(d, "embedded.srt"), os.path.join(d, "embedded.none")
+        if os.path.isfile(emb):
+            try:
+                with open(emb, "r", encoding="utf-8", errors="replace") as f:
+                    return not_ai.parse_captions(f.read())
+            except Exception:
+                return []
+        if not allow_extract or os.path.isfile(none) or not os.path.isfile(path):
+            return []
+        os.makedirs(d, exist_ok=True)
+        try:
+            p = run_hidden([ffmpeg_exe(), "-y", "-hide_banner", "-loglevel", "error", "-i", path,
+                            "-map", "0:s:0", "-f", "srt", emb], timeout=60)
+            if p.returncode == 0 and os.path.isfile(emb) and os.path.getsize(emb) > 10:
+                with open(emb, "r", encoding="utf-8", errors="replace") as f:
+                    return not_ai.parse_captions(f.read())
+        except Exception:
+            pass
+        try:
+            if os.path.isfile(emb):
+                os.remove(emb)  # our own temp file only
+            open(none, "w").close()
+        except Exception:
+            pass
+        return []
+
+    def ai_summary(self, vid):
+        v = self.lib.get_video(vid) if vid else None
+        if not v:
+            self._ai_say("Open a video (or name one) and I'll break it into key moments.")
+            return
+        fr = self._ai_say("Reading \u201c%s\u201d: title, description, captions, and checking the frames for "
+                          "scene changes\u2026" % (v.get("title") or "this video"))
+        self._ai_pending = fr
+        threading.Thread(target=self._ai_summary_work, args=(dict(v),), daemon=True).start()
+
+    def _ai_summary_work(self, v):
+        try:
+            res = self._ai_compute_summary(v)
+        except Exception as e:
+            res = {"error": str(e)}
+        self._ai_q.put(("summary", v["id"], res))
+
+    def _ai_compute_summary(self, v):
+        path = v.get("path") or ""
+        if not path or not os.path.isfile(path):
+            return {"error": "the video file is missing"}
+        d = self._ai_dir(v["id"])
+        st = os.stat(path)
+        key = "%d-%d-%d-%s-%s" % (st.st_size, int(st.st_mtime), AI_REV,
+                                  hashlib.md5((v.get("description") or "").encode("utf-8")).hexdigest()[:8],
+                                  hashlib.md5((v.get("title") or "").encode("utf-8")).hexdigest()[:8])
+        cp = os.path.join(d, "summary.json")
+        try:
+            with open(cp, "r", encoding="utf-8") as f:
+                c = json.load(f)
+            if c.get("key") == key and all(os.path.isfile(ch.get("thumb") or "") for ch in c.get("chapters", [])):
+                return c
+        except Exception:
+            pass
+        dur = float(v.get("duration") or 0) or probe_duration(path)
+        caps = self._ai_captions(v, allow_extract=True)
+        desc = v.get("description") or ""
+        desc_ch = not_ai.chapters_from_description(desc, dur)
+        scenes = None
+        if not desc_ch:
+            scenes = not_ai.detect_scenes(ffmpeg_exe(), path, dur, run_hidden)
+        src, chs = not_ai.build_chapters(dur, scenes or [], desc_ch, caps)
+        out = []
+        for i, (t, label) in enumerate(chs):
+            end = chs[i + 1][0] if i + 1 < len(chs) else dur
+            th = os.path.join(d, "ch_%06d.jpg" % int(t * 10))
+            if not os.path.isfile(th):
+                at = min(max(0.0, t + min(0.4, (end - t) / 3.0)), max(0.0, dur - 0.05))
+                try:
+                    run_hidden([ffmpeg_exe(), "-y", "-hide_banner", "-loglevel", "error", "-ss", "%.3f" % at,
+                                "-i", path, "-map", "0:V:0", "-frames:v", "1", "-vf", "scale=192:-2", "-q:v", "4", th],
+                               timeout=30)
+                except Exception:
+                    pass
+            look = not_ai.frame_stats(th) if os.path.isfile(th) else ""
+            if not label:
+                if src.startswith("scene"):
+                    label = "Opening" if i == 0 else "Scene %d" % (i + 1)
+                else:
+                    label = "Part %d" % (i + 1)
+            out.append({"t": round(t, 2), "end": round(end, 2), "label": label, "look": look, "thumb": th})
+        takeaways, sources = [], []
+        ds = not_ai.extractive_summary(desc, 3)
+        if ds:
+            takeaways += ds
+            sources.append("description")
+        if caps:
+            cap_text = ". ".join(c[2].rstrip(".") for c in caps)
+            cs = [s for s in not_ai.extractive_summary(cap_text, 3) if s not in takeaways]
+            takeaways += ["\u201c%s\u201d" % s[:160] for s in cs]
+            sources.append("captions")
+        ch = self.lib.get_channel(v.get("channel_id")) or {}
+        kws = not_ai.keywords_of(" ".join([v.get("title") or "", " ".join(v.get("tags") or []), desc,
+                                           " ".join(c[2] for c in caps)]), 6)
+        facts = "%s long  ·  %d key moments  ·  uploaded %s by %s" % (
+            not_ai.fmt_t(dur), len(out), fmt_date(v.get("uploaded")), ch.get("name") or "a channel")
+        res = {"key": key, "title": v.get("title"), "dur": dur, "source": src, "chapters": out,
+               "takeaways": takeaways, "sources": sources, "keywords": kws, "facts": facts,
+               "scene_count": len(scenes or []), "captions": len(caps)}
+        try:
+            with open(cp, "w", encoding="utf-8") as f:
+                json.dump(res, f, ensure_ascii=False, indent=1)
+        except Exception:
+            pass
+        return res
+
+    def _ai_render_summary(self, vid, res):
+        pend = getattr(self, "_ai_pending", None)
+        if pend is not None:
+            try:
+                pend.destroy()
+            except Exception:
+                pass
+            self._ai_pending = None
+        if res.get("error"):
+            self._ai_say("I couldn't read this video: %s." % res["error"])
+            return
+        fr = self._ai_msg()
+        self._ai_head(fr)
+        self._ai_text(fr, "Key moments \u00b7 %s" % (res.get("title") or ""), bold=True, size=11)
+        self._ai_text(fr, res.get("facts") or "", fg=MUT, size=9)
+        self._ai_text(fr, "Click a moment to jump there.", fg=MUT, size=9, pady=(0, 4))
+        for ch in res.get("chapters") or []:
+            self._ai_chapter_row(fr, vid, ch)
+        self._ai_text(fr, "Key takeaways", bold=True, pady=(10, 2))
+        tk_ = list(res.get("takeaways") or [])
+        if res.get("keywords"):
+            tk_.append("Main topics (by keyword weight): " + ", ".join(res["keywords"]))
+        if not res.get("takeaways"):
+            tk_.insert(0, "There's no description or captions to summarize, so I can only give the structure "
+                          "above and the topic words from the title.")
+        for line in tk_:
+            self._ai_text(fr, "\u2022 " + line, size=10)
+        src = res.get("source") or ""
+        cap_note = ("%d caption lines read" % res["captions"]) if res.get("captions") else "no captions found"
+        self._ai_text(fr, "How I got this: moments from %s; takeaways from %s; %s. Labels like \u201cdim, warm "
+                          "tones\u201d are measured from the pixels \u2014 I can't hear speech or recognise what's on screen."
+                      % (src, " + ".join(res.get("sources") or []) or "the title only", cap_note),
+                      fg=DIM, size=8, pady=(8, 0))
+        self._ai_end()
+        cfg = self.ai_cfg()
+        if cfg.get("enabled") and cfg.get("endpoint"):
+            facts = json.dumps({k: res.get(k) for k in ("title", "facts", "takeaways", "keywords")}, ensure_ascii=False)
+            facts += "\nChapters: " + "; ".join("%s %s" % (not_ai.fmt_t(c["t"]), c["label"]) for c in res["chapters"])
+            self._ai_llm("Write a short, plain 2-3 sentence summary for a viewer using ONLY these facts. "
+                         "If the facts are thin, say so. Do not invent details.", facts)
+
+    # ---------- optional own endpoint ----------
+    def _ai_llm(self, system, user):
+        fr = self._ai_say("Asking your own AI endpoint\u2026")
+        key = str(id(fr))
+        self._ai_llm_rows = getattr(self, "_ai_llm_rows", {})
+        self._ai_llm_rows[key] = fr
+
+        def work():
+            try:
+                out = not_ai.llm_complete(self.ai_cfg(), system, user)
+                res = {"text": out or "(empty answer)"}
+            except Exception as e:
+                res = {"error": str(e)}
+            self._ai_q.put(("llm", key, res))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _ai_render_llm(self, key, res):
+        fr = self._ai_llm_rows.pop(key, None)
+        if fr is not None:
+            try:
+                fr.destroy()
+            except Exception:
+                pass
+        if res.get("error"):
+            self._ai_say("Your AI endpoint didn't answer (%s). Everything above is from local data." % res["error"][:140])
+        else:
+            self._ai_say(res["text"].strip(), note="From your own AI endpoint (optional setting), based on the facts above.")
+
+    def _ai_settings(self):
+        cfg = self.ai_cfg()
+        top = tk.Toplevel(self)
+        top.title("Not AI settings")
+        top.configure(bg=BG)
+        top.geometry("520x430")
+        top.transient(self)
+        tk.Label(top, text="Not AI settings", bg=BG, fg=TXT, font=(FONT_UI, 14, "bold"), anchor="w").pack(fill="x", padx=20, pady=(16, 4))
+        tk.Label(top, text="Not AI works fully offline from your library. Optionally, you can connect your own "
+                           "OpenAI-compatible chat endpoint to polish summaries and title ideas. It's off by default; "
+                           "leave it empty and everything still works.",
+                 bg=BG, fg=MUT, font=(FONT_UI, 9), wraplength=470, justify="left", anchor="w").pack(fill="x", padx=20)
+        en = tk.BooleanVar(value=bool(cfg.get("enabled")))
+        tk.Checkbutton(top, text="Use my own AI endpoint (optional)", variable=en, bg=BG, fg=TXT, selectcolor=CARD,
+                       activebackground=BG, activeforeground=TXT, font=(FONT_UI, 11)).pack(anchor="w", padx=20, pady=(12, 4))
+        vars_ = {}
+        for key, label, show in (("endpoint", "Endpoint URL (e.g. https://host/v1)", ""), ("api_key", "API key", "\u2022"),
+                                 ("model", "Model name", "")):
+            tk.Label(top, text=label, bg=BG, fg=MUT, font=(FONT_UI, 9), anchor="w").pack(fill="x", padx=20, pady=(8, 2))
+            var = tk.StringVar(value=cfg.get(key) or "")
+            tk.Entry(top, textvariable=var, show=show, bg=SEARCH_BG, fg=TXT, insertbackground=TXT, relief="flat",
+                     font=(FONT_UI, 11)).pack(fill="x", padx=20, ipady=4)
+            vars_[key] = var
+        tk.Label(top, text="Stored only on this PC in your NOT TUBE data folder. Only a short list of facts "
+                           "(title, chapters, takeaways) is sent, and only when this is switched on.",
+                 bg=BG, fg=DIM, font=(FONT_UI, 8), wraplength=470, justify="left", anchor="w").pack(fill="x", padx=20, pady=(10, 0))
+
+        def save():
+            d = {"enabled": bool(en.get()), "endpoint": vars_["endpoint"].get().strip(),
+                 "api_key": vars_["api_key"].get().strip(), "model": vars_["model"].get().strip()}
+            if d["enabled"] and d["endpoint"] and not d["endpoint"].lower().startswith(("https://", "http://localhost", "http://127.0.0.1")):
+                messagebox.showwarning("Not AI", "Please use an https:// endpoint (or a local http://localhost one).", parent=top)
+                return
+            self.ai_save_cfg(d)
+            top.destroy()
+            self.toast("Not AI settings saved")
+
+        Pill(top, "Save", cmd=save, fill=WHITE, fg=BLACK, hover="#e5e5e5", radius=16, padx=16, pady=6,
+             font=(FONT_UI, 11, "bold")).pack(anchor="e", padx=20, pady=14)
+
+    # ---------- 3) creator title & tag helper ----------
+    def ai_helper(self):
+        rows = [r for r in getattr(self, "_upload_rows", []) if r.get("frame") is not None and r["frame"].winfo_exists()]
+        if self.page == "studio" and rows:
+            self.ai_helper_for_upload(rows[-1], echo=False)
+            return
+        if self.page == "watch" and self.watch_id and self._may_manage_video(self.watch_id):
+            v = self.lib.get_video(self.watch_id)
+            self._ai_helper_render(
+                raw=os.path.basename(v.get("path") or ""), base_title=v.get("title") or "", desc=v.get("description") or "",
+                dur=float(v.get("duration") or 0), is_short=bool(v.get("is_short")), info={"width": 0, "height": 0},
+                use_title=lambda t, vid=v["id"]: (self.lib.update_video(vid, title=t), self.toast("Title updated")),
+                use_tags=lambda tags, vid=v["id"]: (self.lib.update_video(vid, tags=tags), self.toast("Tags saved")),
+                existing=True)
+            return
+        self._ai_say("Open Studio \u2192 Upload and pick a video file. Then press \u201cNot AI: title & tags\u201d on it "
+                     "(or ask me here) and I'll clean up the filename, suggest titles and generate tags.")
+
+    def ai_helper_for_upload(self, rec, echo=True):
+        if not getattr(self, "ai_open", False):
+            self.ai_toggle(True)
+        raw = os.path.basename(rec["path"])
+        if echo:
+            self._ai_user("Title & tags for %s" % raw)
+        info = rec.get("info") or {}
+        self._ai_helper_render(
+            raw=raw, base_title=None, desc=rec["desc"].get("1.0", "end").strip(),
+            dur=float(info.get("duration") or 0), is_short=bool(rec["short"].get()), info=info,
+            use_title=lambda t: (rec["title"].set(t), self.toast("Title set")),
+            use_tags=lambda tags: (rec["tags"].set(", ".join(tags)), self.toast("Tags added")))
+
+    def _ai_helper_render(self, raw, base_title, desc, dur, is_short, info, use_title, use_tags, existing=False):
+        clean = not_ai.clean_filename(raw)
+        start = (base_title or "").strip() if existing else clean
+        if existing and not_ai.clean_filename(start + ".x") and len(not_ai.clean_filename(start + ".x")) < len(start):
+            start = not_ai.clean_filename(start + ".x")
+        if not start:
+            start = "New Video"
+        ch = self.lib.current_channel() or {}
+        cooc = not_ai.library_cooccurrence(self.lib.videos())
+        kws = not_ai.keywords_of(start + " " + desc, 3)
+        related = []
+        for k in kws:
+            related += [x for x in cooc.get(not_ai.stem(k), []) if x not in related]
+        titles = not_ai.suggest_titles(start, desc, dur, is_short, related)
+        tags = not_ai.suggest_tags(start, desc, ch.get("name"), info, dur, is_short, library_cooc=cooc)
+        fr = self._ai_msg()
+        self._ai_head(fr)
+        if existing:
+            self._ai_text(fr, "Title ideas for \u201c%s\u201d:" % (base_title or raw), bold=True)
+        else:
+            self._ai_text(fr, "Filename cleanup", bold=True)
+            self._ai_text(fr, "%s  \u2192  %s" % (raw, clean or "(nothing usable in the filename)"), fg=MUT, size=9)
+            self._ai_text(fr, "Title options", bold=True, pady=(8, 2))
+        for t in titles:
+            r = tk.Frame(fr, bg=BG)
+            r.pack(fill="x", pady=2)
+            tk.Label(r, text=t, bg=BG, fg=TXT, font=(FONT_UI, 10), wraplength=AI_W - 120, justify="left",
+                     anchor="w").pack(side="left", fill="x", expand=True)
+            Pill(r, "Use", cmd=lambda t=t: use_title(t), fill=CARD, fg=TXT, hover=HOVER, radius=12, padx=10, pady=3,
+                 font=(FONT_UI, 9, "bold")).pack(side="right")
+        self._ai_text(fr, "Tags", bold=True, pady=(8, 2))
+        self._ai_text(fr, "  ".join("#" + t.replace(" ", "") for t in tags) if tags else "(no tags found)",
+                      fg="#8fb8de", size=10)
+        if tags:
+            Pill(fr, "Use these tags", cmd=lambda: use_tags(tags), fill=WHITE, fg=BLACK, hover="#e5e5e5", radius=14,
+                 padx=12, pady=4, font=(FONT_UI, 9, "bold")).pack(anchor="w", pady=(6, 0))
+        self._ai_text(fr, "Built from your filename, description, video length/format and tags already used in your "
+                          "library. I don't watch the video, so check the title says what's really in it.",
+                      fg=DIM, size=8, pady=(8, 0))
+        self._ai_end()
+        cfg = self.ai_cfg()
+        if cfg.get("enabled") and cfg.get("endpoint"):
+            self._ai_llm("Suggest 3 short, punchy but honest video titles (one per line) using ONLY these words/facts. "
+                         "No clickbait, no claims not in the facts.",
+                         "Filename words: %s\nDescription: %s\nLength: %s\nVertical short: %s" %
+                         (clean, desc[:600], not_ai.fmt_t(dur), is_short))
+
+
+
+class App(NotAIMixin, tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("NOT TUBE")
@@ -1596,6 +2442,9 @@ class App(tk.Tk):
         self.sidebar_open = True
         self.chip = "All"
         self.search_q = ""
+        self.ai_open = False
+        self._watch_right = None
+        self._ai_greeted = False
         self.watch_id = None
         self.shorts_id = None
         self.channel_id = None
@@ -1730,6 +2579,14 @@ class App(tk.Tk):
 
         right = tk.Frame(top, bg=BAR)
         right.pack(side="right", padx=12)
+        self._photos["ic_notai"] = icon_photo("notai", 16, TXT)
+        self.btn_notai = tk.Label(right, image=self._photos["ic_notai"], text="  Not AI", compound="left",
+                                  bg=BAR, fg=TXT, font=(FONT_UI, 10, "bold"), cursor="hand2", padx=12, pady=6)
+        self.btn_notai.pack(side="left", padx=4)
+        self.btn_notai.bind("<Button-1>", lambda e: self.ai_toggle())
+        self.btn_notai.bind("<Enter>", lambda e: self._ai_btn_paint(True))
+        self.btn_notai.bind("<Leave>", lambda e: self._ai_btn_paint(False))
+        self.after_idle(lambda: self._ai_btn_paint(False))
         create = tk.Frame(right, bg=BAR)
         create.pack(side="left", padx=4)
         self._photos["ic_create"] = icon_photo("create", 18, TXT)
@@ -2185,6 +3042,7 @@ class App(tk.Tk):
         elif page == "studio":
             self._fill_studio()
         self._refresh_avatar()
+        self._ai_context_changed()
 
     def do_search(self):
         if getattr(self, "_search_live_job", None) is not None:
@@ -2819,6 +3677,9 @@ class App(tk.Tk):
         right = tk.Frame(root, bg=BG, width=402)
         right.pack(side="right", fill="y", padx=(0, 16), pady=12)
         right.pack_propagate(False)
+        self._watch_right = right
+        if getattr(self, "ai_open", False):
+            right.pack_forget()
 
         # player
         self.player_holder = tk.Frame(left, bg="#000000")
@@ -3362,7 +4223,7 @@ class App(tk.Tk):
         top = tk.Toplevel(self)
         top.title("Edit video")
         top.configure(bg=BG)
-        top.geometry("520x420")
+        top.geometry("520x500")
         top.transient(self)
         tk.Label(top, text="Title", bg=BG, fg=MUT, font=(FONT_UI, 10), anchor="w").pack(fill="x", padx=20, pady=(16, 2))
         tv = tk.StringVar(value=v.get("title") or "")
@@ -3373,6 +4234,10 @@ class App(tk.Tk):
                        font=(FONT_UI, 11), wrap="word")
         desc.pack(fill="x", padx=20)
         desc.insert("1.0", v.get("description") or "")
+        tk.Label(top, text="Tags (comma separated)", bg=BG, fg=MUT, font=(FONT_UI, 10), anchor="w").pack(fill="x", padx=20, pady=(10, 2))
+        tags_v = tk.StringVar(value=", ".join(v.get("tags") or []))
+        tk.Entry(top, textvariable=tags_v, bg=SEARCH_BG, fg=TXT, insertbackground=TXT, relief="flat",
+                 font=(FONT_UI, 11)).pack(fill="x", padx=20, ipady=4)
         short_var = tk.BooleanVar(value=bool(v.get("is_short")))
         tk.Checkbutton(top, text="Post as NOT SHORT", variable=short_var, bg=BG, fg=TXT,
                        selectcolor=CARD, activebackground=BG, activeforeground=TXT,
@@ -3390,7 +4255,8 @@ class App(tk.Tk):
 
         def save():
             self.lib.update_video(vid, title=tv.get().strip(), description=desc.get("1.0", "end").strip(),
-                                  thumb_src=thumb_path["p"])
+                                  thumb_src=thumb_path["p"],
+                                  tags=[t.strip() for t in tags_v.get().split(",") if t.strip()])
             vv = self.lib.get_video(vid)
             if vv:
                 vv["is_short"] = bool(short_var.get())
@@ -3451,7 +4317,8 @@ class App(tk.Tk):
         inner.pack(fill="x", padx=12, pady=10)
         tk.Label(inner, text=os.path.basename(path), bg=CARD, fg=MUT, font=(FONT_UI, 9),
                  anchor="w").pack(fill="x")
-        tv = tk.StringVar(value=os.path.splitext(os.path.basename(path))[0].replace("-", " ").replace("_", " ").title())
+        tv = tk.StringVar(value=not_ai.clean_filename(path) or
+                          os.path.splitext(os.path.basename(path))[0].replace("-", " ").replace("_", " ").title())
         tk.Label(inner, text="Title", bg=CARD, fg=MUT, font=(FONT_UI, 9), anchor="w").pack(fill="x", pady=(6, 0))
         tk.Entry(inner, textvariable=tv, bg=SEARCH_BG, fg=TXT, insertbackground=TXT, relief="flat",
                  font=(FONT_UI, 12)).pack(fill="x", ipady=5)
@@ -3459,6 +4326,10 @@ class App(tk.Tk):
         desc = tk.Text(inner, bg=SEARCH_BG, fg=TXT, insertbackground=TXT, relief="flat", height=3,
                        font=(FONT_UI, 11), wrap="word")
         desc.pack(fill="x")
+        tk.Label(inner, text="Tags (comma separated)", bg=CARD, fg=MUT, font=(FONT_UI, 9), anchor="w").pack(fill="x", pady=(6, 0))
+        tags_var = tk.StringVar()
+        tk.Entry(inner, textvariable=tags_var, bg=SEARCH_BG, fg=TXT, insertbackground=TXT, relief="flat",
+                 font=(FONT_UI, 11)).pack(fill="x", ipady=4)
         short_var = tk.BooleanVar(value=auto)
         cbfr = tk.Frame(inner, bg=CARD)
         cbfr.pack(fill="x", pady=(8, 0))
@@ -3477,9 +4348,14 @@ class App(tk.Tk):
                 thumb_path["p"] = p
                 self.toast("Thumbnail chosen")
 
-        Pill(inner, "Custom thumbnail", cmd=pick_thumb, fill=HOVER, fg=TXT, hover=CARD,
-             radius=14, padx=10, pady=4, font=(FONT_UI, 9)).pack(anchor="w", pady=(8, 0))
-        rec = {"path": path, "title": tv, "desc": desc, "short": short_var, "thumb": thumb_path, "frame": row}
+        btns = tk.Frame(inner, bg=CARD)
+        btns.pack(fill="x", pady=(8, 0))
+        Pill(btns, "Custom thumbnail", cmd=pick_thumb, fill=HOVER, fg=TXT, hover=CARD,
+             radius=14, padx=10, pady=4, font=(FONT_UI, 9)).pack(side="left")
+        rec = {"path": path, "title": tv, "desc": desc, "short": short_var, "thumb": thumb_path, "frame": row,
+               "tags": tags_var, "info": info}
+        Pill(btns, "Not AI: title & tags", cmd=lambda r=rec: self.ai_helper_for_upload(r), fill=HOVER, fg=TXT,
+             hover=CARD, radius=14, padx=10, pady=4, font=(FONT_UI, 9)).pack(side="left", padx=8)
         self._upload_rows.append(rec)
         # Publish button once, under the box
         if not getattr(self, "_publish_btn", None) or not self._publish_btn.winfo_exists():
@@ -3502,9 +4378,10 @@ class App(tk.Tk):
             title = r["title"].get().strip()
             desc = r["desc"].get("1.0", "end").strip()
             try:
+                tags = [t.strip() for t in (r["tags"].get() if r.get("tags") else "").split(",") if t.strip()]
                 self.lib.import_video(
                     r["path"], title, desc, ch["id"],
-                    thumb_src=r["thumb"]["p"], is_short=bool(r["short"].get()),
+                    thumb_src=r["thumb"]["p"], is_short=bool(r["short"].get()), tags=tags,
                 )
                 n += 1
             except Exception as e:

@@ -1,0 +1,20 @@
+reel=v-1794505279299-5341 dur=64.02
+shot Z:\workspace\not-tube\shots\notai_109\00_home_button.png
+summary took 3.3s
+source=scene changes detected in the video frames chapters=[(0.0, 'Opening', 'dim, warm tones'), (14.0, 'Scene 2', 'dark, cool/blue tones'), (27.0, 'Scene 3', 'dim, green tones'), (40.0, 'Scene 4', 'dark, cool/blue tones'), (52.0, 'Scene 5', 'dim, warm tones')]
+takeaways=['We start on autumn streets, then city lights in the rain.', 'Sunrise over a glass-still lake follows.', 'It ends at a busy night market with street food.']
+shot Z:\workspace\not-tube\shots\notai_109\01_summary_key_moments.png
+after clicking moment 27.0 player_t=27.96 page=watch
+shot Z:\workspace\not-tube\shots\notai_109\01b_after_seek.png
+shot Z:\workspace\not-tube\shots\notai_109\02_conversational_search.png
+shot Z:\workspace\not-tube\shots\notai_109\02b_search_creator.png
+shot Z:\workspace\not-tube\shots\notai_109\03_transparent_discovery.png
+shot Z:\workspace\not-tube\shots\notai_109\04_title_tag_helper.png
+title field before Use='Tomato Pasta'
+pills=['Use', 'Use', 'Use', 'Use these tags']
+title after Use='Quick Weeknight Tomato Pasta with Garlic and Basil' tags='tomato, pasta, quick, weeknight, garlic, basil, tomato pasta, northwind labs'
+shot Z:\workspace\not-tube\shots\notai_109\04b_helper_applied.png
+shot Z:\workspace\not-tube\shots\notai_109\05_how_it_works.png
+cfg default={'enabled': False, 'endpoint': '', 'api_key': '', 'model': ''}
+search bar page=search results=1
+shot Z:\workspace\not-tube\shots\notai_109\06_search_bar_panel_closed.png
